@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <unistd.h>
-#include <ringbuf.h>
+#include <bpf/libbpf.h>
 #include "sys_behavior.skel.h"
 #include "ssl_sniffer.skel.h"
 #include "common.h"
@@ -79,21 +79,21 @@ int main(int argc, char **argv)
     printf("[RINGBUF] Ring Buffer Handler starting...\n");
 
     printf("[RINGBUF] Loading BPF skeletons...\n");
-    struct sys_behavior_bpf *sys_skel = sys_behavior_bpf__open_and_load();
+    struct sys_behavior_bpf_bpf *sys_skel = sys_behavior_bpf_bpf__open_and_load();
     if (!sys_skel) {
         fprintf(stderr, "[RINGBUF] Failed to load sys_behavior BPF\n");
         return 1;
     }
 
-    struct ssl_sniffer_bpf *ssl_skel = ssl_sniffer_bpf__open_and_load();
+    struct ssl_sniffer_bpf_bpf *ssl_skel = ssl_sniffer_bpf_bpf__open_and_load();
     if (!ssl_skel) {
         fprintf(stderr, "[RINGBUF] Failed to load ssl_sniffer BPF\n");
         return 1;
     }
 
     printf("[RINGBUF] Attaching BPF programs...\n");
-    sys_behavior_bpf__attach(sys_skel);
-    ssl_sniffer_bpf__attach(ssl_skel);
+    sys_behavior_bpf_bpf__attach(sys_skel);
+    ssl_sniffer_bpf_bpf__attach(ssl_skel);
 
     printf("[RINGBUF] Setting up ring buffer polling...\n");
 
@@ -135,8 +135,8 @@ int main(int argc, char **argv)
     printf("[RINGBUF] Shutting down ring buffer handler...\n");
     ring_buffer__free(sys_rb);
     ring_buffer__free(ssl_rb);
-    sys_behavior_bpf__destroy(sys_skel);
-    ssl_sniffer_bpf__destroy(ssl_skel);
+    sys_behavior_bpf_bpf__destroy(sys_skel);
+    ssl_sniffer_bpf_bpf__destroy(ssl_skel);
     printf("[RINGBUF] Ring buffer handler shutdown complete\n");
 
     return 0;
