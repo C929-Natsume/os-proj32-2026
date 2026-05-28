@@ -4,6 +4,7 @@ import time
 import redis
 import json
 from audit_engine import AuditEngine
+from intra_agent.main import IntraAgentAnalyzer
 
 REDIS_HOST = "127.0.0.1"
 REDIS_PORT = 6379
@@ -15,6 +16,7 @@ class MainAnalyzer:
         self.redis_client = None
         self.pubsub = None
         self.audit_engine = AuditEngine()
+        self.intra_analyzer = IntraAgentAnalyzer()
         print("[ANALYZER] Main Analyzer initialized successfully")
 
     def connect_redis(self):
@@ -45,10 +47,17 @@ class MainAnalyzer:
         if 'filename' in event_data:
             print(f"[ANALYZER]   Filename: {event_data['filename']}")
 
-        audit_result = self.audit_engine.audit_event(event_data)
-        print(f"[ANALYZER]   Audit result: {audit_result}")
+        intra_reqs = self.intra_analyzer.analyze_event(event_data)
+        if not intra_reqs:
+            print("[ANALYZER]   无单体审计请求")
+            return []
 
-        return audit_result
+        results = []
+        for req in intra_reqs:
+            result = self.audit_engine.audit_intra_request(req)
+            print(f"[ANALYZER]   单体审计结果: {result}")
+            results.append(result)
+        return results
 
     def process_ssl_event(self, event_data):
         print(f"[ANALYZER] Processing SSL event: {event_data}")
@@ -59,10 +68,17 @@ class MainAnalyzer:
 
         print(f"[ANALYZER]   Event type: {event_type}, PID: {pid}, Comm: {comm}, Data length: {data_len}")
 
-        audit_result = self.audit_engine.audit_event(event_data)
-        print(f"[ANALYZER]   Audit result: {audit_result}")
+        intra_reqs = self.intra_analyzer.analyze_event(event_data)
+        if not intra_reqs:
+            print("[ANALYZER]   无单体审计请求")
+            return []
 
-        return audit_result
+        results = []
+        for req in intra_reqs:
+            result = self.audit_engine.audit_intra_request(req)
+            print(f"[ANALYZER]   单体审计结果: {result}")
+            results.append(result)
+        return results
 
     def run(self):
         print("[ANALYZER] Starting Main Analyzer...")

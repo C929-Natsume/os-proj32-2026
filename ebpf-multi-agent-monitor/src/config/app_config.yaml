@@ -7,10 +7,13 @@ redis:
 llm:
   enabled: false
   api_key: api_key
-  model: gpt-4
-  endpoint: https://api.openai.com/v1/chat/completions
+  model: deepseek-chat
+  endpoint: https://api.deepseek.com/chat/completions
+  judge_cmd: ""
+  timeout_sec: 15
 
 monitor:
+  workspace_root: /mnt/e/os2026
   target_processes:
     - python
     - bash

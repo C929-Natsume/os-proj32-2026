@@ -32,3 +32,26 @@ alert_rules:
   - name: port_scanning
     condition: network_count > 10
     severity: high
+
+intra_agent:
+  white_path_prefixes:
+    - /mnt/e/os2026
+    - /tmp/
+    - /var/tmp/
+  black_path_markers:
+    - /etc/shadow
+    - /etc/passwd
+    - /etc/sudoers
+    - /.ssh/
+    - /.aws/credentials
+    - /.kube/config
+    - .env
+    - /var/run/docker.sock
+  white_rules: []
+  black_rules:
+    - UNEXPECTED_SHELL_EXEC
+    - SENSITIVE_FILE_ACCESS
+    - OUT_OF_WORKSPACE_OPERATION
+  gray_rules:
+    - POSSIBLE_LOGIC_LOOP
+  llm_allow_suppress_rules: []
