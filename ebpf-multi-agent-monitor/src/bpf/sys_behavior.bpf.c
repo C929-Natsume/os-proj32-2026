@@ -4,69 +4,112 @@
 #include <bpf_tracing.h>
 #include "common.h"
 
+// 定义共享的 Ring Buffer Map
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
     __uint(max_entries, 256 * 1024);
 } rb SEC(".maps");
 
-// 1. Tracepoint 探针 (处理 sys_enter)
-SEC("tracepoint/raw_syscalls/sys_enter")
-int handle_sys_enter(void *ctx)
-{
-    // 在函数内部进行强制类型转换，绕过内核 BTF 校验
-    struct trace_event_raw_sys_enter *args = (struct trace_event_raw_sys_enter *)ctx;
-    bpf_printk("[BPF] sys_enter captured: id=%d", args->id);
-    return 0;
-}
+// 抽象公共上下文捕获逻辑
+static __always_inline struct sys_event* reserve_event(__u32 event_type) {
+    struct sys_event *event = bpf_ringbuf_reserve(&rb, sizeof(struct sys_event), 0);
+    if (!event) {
+        return NULL; // 缓冲区满时安全丢包
+    }
 
-// 2. Tracepoint 探针 (处理 sys_exit)
-SEC("tracepoint/raw_syscalls/sys_exit")
-int handle_sys_exit(void *ctx)
-{
-    // 在函数内部进行强制类型转换
-    struct trace_event_raw_sys_exit *args = (struct trace_event_raw_sys_exit *)ctx;
-    bpf_printk("[BPF] sys_exit captured: id=%d, ret=%d", args->id, args->ret);
-    return 0;
-}
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    event->event_type = event_type;
+    event->pid = (__u32)(pid_tgid >> 32); // 提取真实包含线程组的 PID
+    event->uid = (__u32)bpf_get_current_uid_gid();
+    event->timestamp = bpf_ktime_get_ns();
+    bpf_get_current_comm(&event->comm, sizeof(event->comm));
 
-// =======================================================
-// 现代化 ksyscall 探针写法
-// 注意：1. SEC 名字直接用短名即可 (libbpf 自动匹配 __x64_sys_...)
-//       2. BPF_KSYSCALL 直接接收原始的系统调用参数，拒绝 pt_regs!
-// =======================================================
+    return event;
+}
 
 SEC("ksyscall/execve")
 int BPF_KSYSCALL(sys_execve, const char *filename)
 {
-    bpf_printk("[BPF] execve detected: filename=%s", filename);
+    struct sys_event *event = reserve_event(EVENT_EXECVE);
+    if (!event) return 0;
+
+    // 安全地从用户态空间读取执行文件名字符串
+    bpf_probe_read_user_str(&event->filename, sizeof(event->filename), filename);
+    
+    bpf_ringbuf_submit(event, 0);
     return 0;
 }
 
 SEC("ksyscall/fork")
 int BPF_KSYSCALL(sys_fork)
 {
-    bpf_printk("[BPF] fork system call detected");
+    struct sys_event *event = reserve_event(EVENT_FORK);
+    if (!event) return 0;
+
+    // fork 主要关注上下文（父进程及生成时机），filename 置空
+    event->filename[0] = '\0';
+    
+    bpf_ringbuf_submit(event, 0);
     return 0;
 }
 
 SEC("ksyscall/open")
 int BPF_KSYSCALL(sys_open, const char *filename, int flags, int mode)
 {
-    bpf_printk("[BPF] open syscall: filename=%s, flags=%d, mode=%d", filename, flags, mode);
+    struct sys_event *event = reserve_event(EVENT_OPEN);
+    if (!event) return 0;
+
+    bpf_probe_read_user_str(&event->filename, sizeof(event->filename), filename);
+    event->open.mode = (__u32)mode;
+    
+    bpf_ringbuf_submit(event, 0);
     return 0;
 }
 
 SEC("ksyscall/unlink")
 int BPF_KSYSCALL(sys_unlink, const char *pathname)
 {
-    bpf_printk("[BPF] unlink syscall: pathname=%s", pathname);
+    struct sys_event *event = reserve_event(EVENT_UNLINK);
+    if (!event) return 0;
+
+    bpf_probe_read_user_str(&event->filename, sizeof(event->filename), pathname);
+    
+    bpf_ringbuf_submit(event, 0);
     return 0;
 }
 
 SEC("ksyscall/connect")
 int BPF_KSYSCALL(sys_connect, int sockfd, struct sockaddr *uservaddr, int addrlen)
 {
-    bpf_printk("[BPF] connect syscall: sockfd=%d, addrlen=%d", sockfd, addrlen);
+    struct sys_event *event = reserve_event(EVENT_CONNECT);
+    if (!event) return 0;
+
+    event->filename[0] = '\0'; // 网络事件不涉及 filename
+    
+    // 捕获网络连接的底层协议族
+    short family = 0;
+    bpf_probe_read_kernel(&family, sizeof(family), &uservaddr->sa_family);
+    event->connect.family = (int)family;
+    
+    // 针对 IPv4 (AF_INET) 提取目标端口与 IP
+    if (family == 2) { // AF_INET = 2
+        struct sockaddr_in in_addr;
+        bpf_probe_read_kernel(&in_addr, sizeof(in_addr), uservaddr);
+        
+        // 【修复 1】：使用 Clang/GCC 内置的字节反转函数代替 __constant_ntohs
+        event->connect.dport = __builtin_bswap16(in_addr.sin_port);
+        
+        // 【修复 2】：不要在内核态做 snprintf，直接把 4 字节原始 IP 存入 dip
+        unsigned char ip[4];
+        bpf_probe_read_kernel(&ip, sizeof(ip), &in_addr.sin_addr.s_addr);
+        event->connect.dip[0] = ip[0];
+        event->connect.dip[1] = ip[1];
+        event->connect.dip[2] = ip[2];
+        event->connect.dip[3] = ip[3];
+        event->connect.dip[4] = '\0'; 
+    }
+
+    bpf_ringbuf_submit(event, 0);
     return 0;
 }
 

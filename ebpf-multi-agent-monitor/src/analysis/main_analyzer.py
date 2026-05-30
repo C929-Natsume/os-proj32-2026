@@ -5,6 +5,8 @@ import redis
 import json
 from audit_engine import AuditEngine
 from intra_agent.main import IntraAgentAnalyzer
+# 1. 新增：导入多智能体协同分析模块
+from inter_agent.main import InterAgentAnalyzer
 
 REDIS_HOST = "127.0.0.1"
 REDIS_PORT = 6379
@@ -16,7 +18,12 @@ class MainAnalyzer:
         self.redis_client = None
         self.pubsub = None
         self.audit_engine = AuditEngine()
+        
+        # 初始化单体分析器
         self.intra_analyzer = IntraAgentAnalyzer()
+        # 2. 新增：初始化多体协同分析器
+        self.inter_analyzer = InterAgentAnalyzer() 
+        
         print("[ANALYZER] Main Analyzer initialized successfully")
 
     def connect_redis(self):
@@ -37,25 +44,39 @@ class MainAnalyzer:
             return False
 
     def process_sys_event(self, event_data):
-        print(f"[ANALYZER] Processing system event: {event_data}")
+        # 统一获取基础通用字段
         event_type = event_data.get('type', 'unknown')
         pid = event_data.get('pid', 0)
+        uid = event_data.get('uid', 0)
         comm = event_data.get('comm', 'unknown')
+        # 获取我们刚在 C 语言加上的核心字段 timestamp
+        timestamp = event_data.get('timestamp', 0) 
 
-        print(f"[ANALYZER]   Event type: {event_type}, PID: {pid}, Comm: {comm}")
+        print(f"[ANALYZER] Processing SYS_EVENT | Type: {event_type} | PID: {pid} | UID: {uid} | Comm: {comm}")
+        print(f"[ANALYZER]   -> Timestamp: {timestamp} ns")
 
-        if 'filename' in event_data:
-            print(f"[ANALYZER]   Filename: {event_data['filename']}")
+        # 动态处理不同事件的特有字段
+        if 'filename' in event_data and event_data['filename']:
+            print(f"[ANALYZER]   -> Target File: {event_data['filename']}")
+            
+        if 'dip' in event_data and 'dport' in event_data:
+            print(f"[ANALYZER]   -> Network Target: {event_data['dip']}:{event_data['dport']}")
 
+        # 路由 1: 交给 Inter-Agent
+        inter_alerts = self.inter_analyzer.run_analysis(event_data)
+        if inter_alerts:
+            print(f"[ANALYZER-INTER] 发现多体协同异常: {inter_alerts}")
+
+        # 路由 2: 交给 Intra-Agent
         intra_reqs = self.intra_analyzer.analyze_event(event_data)
         if not intra_reqs:
-            print("[ANALYZER]   无单体审计请求")
             return []
 
+        # 路由 3: 送入审计引擎
         results = []
         for req in intra_reqs:
             result = self.audit_engine.audit_intra_request(req)
-            print(f"[ANALYZER]   单体审计结果: {result}")
+            print(f"[ANALYZER-AUDIT] 单体审计结果: {result}")
             results.append(result)
         return results
 
@@ -68,6 +89,7 @@ class MainAnalyzer:
 
         print(f"[ANALYZER]   Event type: {event_type}, PID: {pid}, Comm: {comm}, Data length: {data_len}")
 
+        # SSL 流量目前主要属于单体行为分析的范畴
         intra_reqs = self.intra_analyzer.analyze_event(event_data)
         if not intra_reqs:
             print("[ANALYZER]   无单体审计请求")
@@ -76,7 +98,7 @@ class MainAnalyzer:
         results = []
         for req in intra_reqs:
             result = self.audit_engine.audit_intra_request(req)
-            print(f"[ANALYZER]   单体审计结果: {result}")
+            print(f"[ANALYZER-AUDIT] SSL单体审计结果: {result}")
             results.append(result)
         return results
 

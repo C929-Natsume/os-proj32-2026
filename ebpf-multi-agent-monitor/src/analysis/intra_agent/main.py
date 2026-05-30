@@ -219,7 +219,29 @@ class IntraAgentAnalyzer:
                 )
 
         elif event_type == EVENT_CONNECT:
+            # 基础计数
             s["net_connect_cnt"] += 1
+            
+            # 【新增】：提取 C 语言传过来的网络目标，可以留作后续大模型威胁情报查询的物料
+            dip = event_data.get('dip', '0.0.0.0')
+            dport = event_data.get('dport', 0)
+            
+            # 防刷屏控制：每 5 秒最多报一次可疑网络连接
+            if ts_ns - s.get("last_network_alert_ns", 0) >= self.event_alert_cooldown_ns:
+                s["last_network_alert_ns"] = ts_ns
+                # 记录这通报的连接详情
+                net_info = f"{dip}:{dport}"
+                # 如果检测到非标准的 HTTP(80) / HTTPS(443) 端口连接，可以触发低级别告警给 LLM 分析
+                if dport not in [80, 443]:
+                    reqs.append(
+                        self._build_req(
+                            event_data,
+                            "UNUSUAL_NETWORK_CONNECTION",
+                            net_info,
+                            f"检测到非标端口外连请求: {net_info}",
+                            "MEDIUM",
+                        )
+                    )
 
         elif event_type == EVENT_SSL_READ:
             s["ssl_read_cnt"] += 1
