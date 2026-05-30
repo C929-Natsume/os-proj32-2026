@@ -31,25 +31,21 @@ all: skeletons user_programs
 skeletons: $(SKEL_SRCS)
 	@echo "[MAKE] BPF skeleton generation complete"
 
-loader: loader.c $(SKEL_SRCS)
-	@echo "[MAKE] Compiling loader..."
-	$(CC) $(CFLAGS) -o loader loader.c $(LDFLAGS)
+loader: loader.c
+	@echo "[MAKE] Compiling loader (Trace Pipe Logger)..."
+	$(CC) $(CFLAGS) -o loader loader.c
 
-ringbuf_handler: ringbuf_handler.c $(SKEL_SRCS)
-	@echo "[MAKE] Compiling ringbuf_handler..."
-	$(CC) $(CFLAGS) -o ringbuf_handler ringbuf_handler.c $(LDFLAGS)
+ringbuf_handler: ringbuf_handler.c redis_shipper.c $(SKEL_SRCS)
+	@echo "[MAKE] Compiling ringbuf_handler (integrated with redis_shipper)..."
+	$(CC) $(CFLAGS) -o ringbuf_handler ringbuf_handler.c redis_shipper.c $(LDFLAGS) -lhiredis
 
-redis_shipper: redis_shipper.c $(SKEL_SRCS)
-	@echo "[MAKE] Compiling redis_shipper..."
-	$(CC) $(CFLAGS) -o redis_shipper redis_shipper.c $(LDFLAGS) -lhiredis
-
-user_programs: loader ringbuf_handler redis_shipper
+user_programs: loader ringbuf_handler
 	@echo "[MAKE] User programs built successfully"
 
 clean:
 	@echo "[MAKE] Cleaning build artifacts..."
 	@rm -f *.bpf.o *.skel.h
-	@rm -f loader ringbuf_handler redis_shipper
+	@rm -f loader ringbuf_handler
 	@echo "[MAKE] Clean complete"
 
 .PHONY: all skeletons user_programs clean
