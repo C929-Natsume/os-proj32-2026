@@ -1,6 +1,6 @@
 #include "vmlinux.h"
-#include <bpf/bpf_helpers.h>
-#include <bpf/bpf_tracing.h>
+#include <bpf_helpers.h>
+#include <bpf_tracing.h>
 #include "common.h"
 
 struct {
@@ -8,7 +8,8 @@ struct {
     __uint(max_entries, 256 * 1024);
 } ssl_rb SEC(".maps");
 
-SEC("uprobe/SSL_read")
+// 将目标库指定为 libssl.so.3
+SEC("uprobe/libssl.so.3:SSL_read")
 int ssl_read_enter(struct pt_regs *ctx)
 {
     void *ssl = (void *)PT_REGS_PARM1(ctx);
@@ -18,7 +19,7 @@ int ssl_read_enter(struct pt_regs *ctx)
     return 0;
 }
 
-SEC("uretprobe/SSL_read")
+SEC("uretprobe/libssl.so.3:SSL_read")
 int ssl_read_exit(struct pt_regs *ctx)
 {
     int ret = (int)PT_REGS_RC(ctx);
@@ -26,7 +27,7 @@ int ssl_read_exit(struct pt_regs *ctx)
     return 0;
 }
 
-SEC("uprobe/SSL_write")
+SEC("uprobe/libssl.so.3:SSL_write")
 int ssl_write_enter(struct pt_regs *ctx)
 {
     void *ssl = (void *)PT_REGS_PARM1(ctx);
@@ -36,7 +37,7 @@ int ssl_write_enter(struct pt_regs *ctx)
     return 0;
 }
 
-SEC("uretprobe/SSL_write")
+SEC("uretprobe/libssl.so.3:SSL_write")
 int ssl_write_exit(struct pt_regs *ctx)
 {
     int ret = (int)PT_REGS_RC(ctx);
@@ -44,7 +45,7 @@ int ssl_write_exit(struct pt_regs *ctx)
     return 0;
 }
 
-SEC("uprobe/SSL_connect")
+SEC("uprobe/libssl.so.3:SSL_connect")
 int ssl_connect_enter(struct pt_regs *ctx)
 {
     int fd = (int)PT_REGS_PARM1(ctx);
@@ -52,7 +53,7 @@ int ssl_connect_enter(struct pt_regs *ctx)
     return 0;
 }
 
-SEC("uprobe/SSL_accept")
+SEC("uprobe/libssl.so.3:SSL_accept")
 int ssl_accept_enter(struct pt_regs *ctx)
 {
     void *ssl = (void *)PT_REGS_PARM1(ctx);

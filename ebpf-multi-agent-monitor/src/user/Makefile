@@ -4,19 +4,25 @@ USER_SRCS = loader.c ringbuf_handler.c redis_shipper.c
 COMMON_HDR = ../bpf/common.h
 VMLINUX_H = ../bpf/vmlinux.h
 
-BPF_CLANG = clang-15
-BPF_FLAGS = -target bpf -D__TARGET_ARCH_x86 -I../bpf -I/home/gabriel/os2026/libbpf/include/uapi -I/home/gabriel/os2026/libbpf/include
-BPFTOOL = /home/gabriel/os2026/bpftool/src/bpftool
+BPF_CLANG = clang
+BPF_FLAGS = -target bpf -D__TARGET_ARCH_x86 -I../bpf \
+            -I/home/gabriel/comp/project3136859-387615/libbpf/include \
+            -I/home/gabriel/comp/project3136859-387615/libbpf/src
+BPFTOOL = /home/gabriel/comp/project3136859-387615/bpftool/src/bpftool
 
 CC = gcc
-CFLAGS = -Wall -Wextra -I/home/gabriel/os2026/libbpf/include -I/home/gabriel/os2026/libbpf/include/uapi -I../bpf
-LDFLAGS = -L/home/gabriel/os2026/libbpf/build/lib -lbpf -lelf -lz
+CFLAGS = -Wall -Wextra \
+         -I../bpf \
+         -I/home/gabriel/comp/project3136859-387615/libbpf/include \
+         -I/home/gabriel/comp/project3136859-387615/libbpf/src \
+         -I/home/gabriel/comp/project3136859-387615/bpftool/src/libbpf/include
+LDFLAGS = -L/home/gabriel/comp/project3136859-387615/libbpf/src -lbpf -lelf -lz
 
 all: skeletons user_programs
 
 %.skel.h: ../bpf/%.bpf.c $(COMMON_HDR) $(VMLINUX_H)
 	@echo "[MAKE] Compiling $< to BPF object..."
-	$(BPF_CLANG) $(BPF_FLAGS) -g -c $< -o $(basename $(notdir $<)).bpf.o
+	$(BPF_CLANG) $(BPF_FLAGS) -O2 -g -c $< -o $(basename $(notdir $<)).bpf.o
 	@echo "[MAKE] Fixing .rodata.str1.1 section for compatibility..."
 	@llvm-objcopy --rename-section .rodata.str1.1=.rodata $(basename $(notdir $<)).bpf.o 2>/dev/null || true
 	@echo "[MAKE] Generating skeleton $@..."

@@ -275,7 +275,7 @@ monitor:
 
 ```bash
 # 安装依赖
-sudo apt install clang bpftool libbpf-dev redis-server libhiredis-dev
+sudo apt install redis-server libhiredis-dev
 
 # Python 依赖
 pip install -r requirements.txt
