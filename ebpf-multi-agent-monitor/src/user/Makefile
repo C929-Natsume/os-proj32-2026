@@ -31,12 +31,14 @@ all: skeletons user_programs
 skeletons: $(SKEL_SRCS)
 	@echo "[MAKE] BPF skeleton generation complete"
 
-loader: loader.c
-	@echo "[MAKE] Compiling loader (Trace Pipe Logger)..."
-	$(CC) $(CFLAGS) -o loader loader.c
+# 修改点 1：loader 现在负责加载 BPF，因此依赖骨架 $(SKEL_SRCS)，且需要链接 $(LDFLAGS)
+loader: loader.c $(SKEL_SRCS)
+	@echo "[MAKE] Compiling loader (eBPF Loader & Map Pinner)..."
+	$(CC) $(CFLAGS) -o loader loader.c $(LDFLAGS)
 
-ringbuf_handler: ringbuf_handler.c redis_shipper.c $(SKEL_SRCS)
-	@echo "[MAKE] Compiling ringbuf_handler (integrated with redis_shipper)..."
+# 修改点 2：ringbuf_handler 不再依赖骨架，但需要链接 redis_shipper, libbpf 和 hiredis
+ringbuf_handler: ringbuf_handler.c redis_shipper.c
+	@echo "[MAKE] Compiling ringbuf_handler (Event Consumer & Redis Shipper)..."
 	$(CC) $(CFLAGS) -o ringbuf_handler ringbuf_handler.c redis_shipper.c $(LDFLAGS) -lhiredis
 
 user_programs: loader ringbuf_handler
