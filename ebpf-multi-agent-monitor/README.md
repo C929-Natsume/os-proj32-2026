@@ -35,7 +35,11 @@ ebpf-multi-agent-monitor/
 │   ├── bpf/                           # eBPF 内核态程序 (libbpf)
 │   │   ├── vmlinux.h                  # bpftool 生成的内核数据结构
 │   │   ├── sys_behavior.bpf.c         # 系统调用监控 (execve/fork/open/...)
+│   │   ├── sys_behavior.c             # 挂载系统调用监控
+│   │   ├── sys_behavior.h             # 系统调用事件结构体
 │   │   ├── ssl_sniffer.bpf.c          # SSL 流量监控 (SSL_read/write/...)
+│   │   ├── ssl_sniffer.c              # 挂载 SSL 流量监控
+│   │   ├── ssl_sniffer.h              # SSL 流量数据结构体
 │   │   └── common.h                   # 共享结构体定义
 │   │
 │   ├── user/                          # 用户态程序
@@ -44,7 +48,7 @@ ebpf-multi-agent-monitor/
 │   │   ├── redis_shipper.c            # Redis 数据推送
 │   │   └── Makefile                   # 构建脚本
 │   │
-│   ├── analysis/                      # Python 分析模块
+│   ├── analysis/                      # 分析模块
 │   │   ├── main_analyzer.py           # 分析入口，消费 Redis 数据
 │   │   ├── audit_engine.py            # 审计引擎，黑白名单 + LLM
 │   │   ├── intra_agent/               # 单智能体行为分析

@@ -1,107 +1,139 @@
-#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
-#include <signal.h>
 #include <unistd.h>
+#include <signal.h>
+#include <dirent.h>
 #include <string.h>
-#include <bpf/libbpf.h>
-#include <bpf/bpf.h>
-#include "sys_behavior.skel.h"
-#include "ssl_sniffer.skel.h"
+#include <ctype.h>
+#include <stdbool.h>
 
-#define TRACE_PIPE_PATH "/sys/kernel/debug/tracing/trace_pipe"
+extern int setup_sys_behavior(void);
+extern void teardown_sys_behavior(void);
 
-// 定义 BPF Map 钉固的路径
-#define SYS_RB_PIN_PATH "/sys/fs/bpf/sys_rb"
-#define SSL_RB_PIN_PATH "/sys/fs/bpf/ssl_rb"
+extern int setup_ssl_sniffer(int target_pid);
+extern void teardown_ssl_sniffer(void);
 
 static volatile int running = 1;
 
-void signal_handler(int sig)
-{
-    printf("\n[LOADER] Stopping trace logger and cleaning up BPF...\n");
+// 捕获 Ctrl+C
+void sig_handler(int sig) {
     running = 0;
 }
 
-int main(int argc, char **argv)
-{
-    printf("[LOADER] eBPF Loader starting... (Handling BPF attach and Map pinning)\n");
+// ================= 寻找 Agent 进程的 PID =================
+int auto_discover_target_pid(void) {
+    DIR *dir = opendir("/proc");
+    if (!dir) return -1;
 
-    // 1. 加载并挂载系统行为 BPF 骨架
-    struct sys_behavior_bpf_bpf *sys_skel = sys_behavior_bpf_bpf__open_and_load();
-    if (!sys_skel) {
-        fprintf(stderr, "[LOADER] Failed to load sys_behavior\n");
-        return 1;
-    }
-    sys_behavior_bpf_bpf__attach(sys_skel);
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        // 检查 PID 目录
+        if (!isdigit(entry->d_name[0])) continue;
 
-    // 2. 加载并挂载 SSL 嗅探 BPF 骨架
-    struct ssl_sniffer_bpf_bpf *ssl_skel = ssl_sniffer_bpf_bpf__open_and_load();
-    if (!ssl_skel) {
-        fprintf(stderr, "[LOADER] Failed to load ssl_sniffer\n");
-        sys_behavior_bpf_bpf__destroy(sys_skel);
-        return 1;
-    }
-    ssl_sniffer_bpf_bpf__attach(ssl_skel);
+        int pid = atoi(entry->d_name);
+        char cmd_path[256];
+        snprintf(cmd_path, sizeof(cmd_path), "/proc/%d/cmdline", pid);
+        
+        FILE *f = fopen(cmd_path, "r");
+        if (!f) continue;
+        
+        char cmdline[2048] = {0};
+        size_t bytes_read = fread(cmdline, 1, sizeof(cmdline) - 1, f);
+        fclose(f);
+        
+        if (bytes_read == 0) continue;
 
-    // 3. 将 RingBuffer Map 钉固 (Pin) 到文件系统，供 ringbuf_handler 读取
-    // 钉固前先尝试解绑，防止上次异常退出导致残留
-    bpf_map__unpin(sys_skel->maps.rb, SYS_RB_PIN_PATH);
-    bpf_map__unpin(ssl_skel->maps.ssl_rb, SSL_RB_PIN_PATH);
+        // cmdline 参数是用 '\0' 分隔的，替换为空格方便 strstr 匹配
+        for (size_t i = 0; i < bytes_read; i++) {
+            if (cmdline[i] == '\0') cmdline[i] = ' ';
+        }
 
-    if (bpf_map__pin(sys_skel->maps.rb, SYS_RB_PIN_PATH) != 0 || 
-        bpf_map__pin(ssl_skel->maps.ssl_rb, SSL_RB_PIN_PATH) != 0) {
-        fprintf(stderr, "[LOADER] Failed to pin maps to /sys/fs/bpf/\n");
-        // 如果钉固失败也做一下清理
-        sys_behavior_bpf_bpf__destroy(sys_skel);
-        ssl_sniffer_bpf_bpf__destroy(ssl_skel);
-        return 1;
-    }
-    printf("[LOADER] BPF programs attached and Maps pinned successfully.\n");
-    
-    // 4. 原有的 trace_pipe 监听逻辑
-    FILE *trace_file = fopen(TRACE_PIPE_PATH, "r");
-    if (!trace_file) {
-        fprintf(stderr, "[LOADER] Failed to open trace_pipe. Are you root?\n");
-        running = 0;
-    }
-
-    // 使用 sigaction 替代老式 signal，避免 getline 被自动重启
-    struct sigaction sa;
-    sa.sa_handler = signal_handler;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0; // 核心：设为 0，坚决不用 SA_RESTART
-
-    if (sigaction(SIGINT, &sa, NULL) == -1) {
-        perror("Failed to set SIGINT handler");
-    }
-    if (sigaction(SIGTERM, &sa, NULL) == -1) {
-        perror("Failed to set SIGTERM handler");
-    }
-
-    char *line = NULL;
-    size_t len = 0;
-
-    while (running) {
-        if (trace_file && getline(&line, &len, trace_file) != -1) {
-            // 过滤只打印带 [BPF] 标签的日志
-            if (strstr(line, "[BPF]") != NULL) {
-                printf("%s", line);
-            }
-        } else {
-            usleep(100000); 
+        // 匹配 Agent 脚本名（待优化）
+        if ((strstr(cmdline, "claude") != NULL || 
+             strstr(cmdline, "anthropic") != NULL || 
+             strstr(cmdline, "agent_test.py") != NULL) &&
+            strstr(cmdline, ".vscode") == NULL &&     // 排除 cmdline 中的 vscode 插件
+            strstr(cmdline, ".vscode") == NULL &&  
+            strstr(cmdline, "./loader") == NULL)
+        {
+            closedir(dir);
+            return pid;
         }
     }
+    closedir(dir);
+    return -1;
+}
 
-    // 5. 退出时清理资源和钉固文件
-    if (line) free(line);
-    if (trace_file) fclose(trace_file);
+int main(int argc, char **argv) {
+    printf("=======================================================\n");
+    printf("[LOADER] 自适应 eBPF 多智能体监控平台主控引擎启动...\n");
+    printf("=======================================================\n");
 
-    bpf_map__unpin(sys_skel->maps.rb, SYS_RB_PIN_PATH);
-    bpf_map__unpin(ssl_skel->maps.ssl_rb, SSL_RB_PIN_PATH);
-    sys_behavior_bpf_bpf__destroy(sys_skel);
-    ssl_sniffer_bpf_bpf__destroy(ssl_skel);
-    printf("[LOADER] Exited cleanly.\n");
+    // 注册信号监听
+    signal(SIGINT, sig_handler);
+    signal(SIGTERM, sig_handler);
 
+    // ================= 1. 挂载系统调用行为引擎 =================
+    // 系统行为是全局监控的，尽早启动可以防止漏掉早期的执行动作
+    printf("[LOADER] [1/2] 正在拉起系统行为追踪引擎...\n");
+    if (setup_sys_behavior() != 0) {
+        fprintf(stderr, "[-] 系统行为引擎启动失败！\n");
+        return 1;
+    }
+
+    // ================= 2. 确定目标 PID =================
+    int target_pid = -1;
+    
+    if (argc >= 2) {
+        // 手动指定模式
+        target_pid = atoi(argv[1]);
+        if (target_pid <= 0) {
+            fprintf(stderr, "[!] 无效的 PID: %s\n", argv[1]);
+            teardown_sys_behavior();
+            return 1;
+        }
+        printf("[LOADER] 使用手动指定的目标 PID: %d\n", target_pid);
+    } else {
+        // 自动巡航模式
+        printf("[LOADER] 未手动指定 PID... 启动自动巡航雷达\n");
+        printf("[LOADER] 正在等待多智能体 (Agent) 进程启动 (按 Ctrl+C 退出)...\n");
+        
+        while (running && target_pid <= 0) {
+            target_pid = auto_discover_target_pid();
+            if (target_pid <= 0) {
+                sleep(1); // 没找到就沉睡 1 秒，不消耗 CPU
+            }
+        }
+        
+        // 如果在等待期间按下了 Ctrl+C
+        if (!running) {
+            teardown_sys_behavior();
+            return 0;
+        }
+        printf("\n[LOADER] 自动获取到智能体 PID: %d\n", target_pid);
+    }
+
+    // ================= 3. 挂载 SSL 加密流量嗅探引擎 =================
+    printf("[LOADER] [2/2] 正在拉起 SSL 加密流量解密引擎 (Target PID: %d)...\n", target_pid);
+    if (setup_ssl_sniffer(target_pid) != 0) {
+        fprintf(stderr, "[-] SSL 嗅探引擎启动失败！\n");
+        teardown_sys_behavior(); // 失败时回滚系统探针
+        return 1;
+    }
+
+    printf("\n[LOADER] 双引擎探针部署完毕，管道已钉固！\n");
+    printf("[LOADER] 系统监控中... (按 Ctrl+C 安全退出)\n");
+    
+    // 主线程沉睡，释放 CPU，纯靠内核态 eBPF 事件驱动
+    while (running) { 
+        sleep(1); 
+    }
+
+    // ================= 4. 优雅卸载与资源回收 =================
+    printf("\n\n[LOADER] 收到终止信号，正在卸载内核探针并清理环境...\n");
+    teardown_ssl_sniffer();
+    teardown_sys_behavior();
+    
+    printf("[LOADER] 清理完成，安全退出。Bye!\n");
     return 0;
 }
