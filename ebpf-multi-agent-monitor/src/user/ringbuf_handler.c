@@ -6,6 +6,10 @@
 #include <bpf/libbpf.h>
 #include <bpf/bpf.h>
 #include "../bpf/common.h"
+#include <time.h>
+
+extern void fetch_and_ship_resources(int res_fd);
+#define RES_MAP_PIN_PATH "/sys/fs/bpf/res_map"
 
 // 外部 Redis 数据推送接口
 extern int redis_shipper_init(void);
@@ -111,10 +115,26 @@ int main(int argc, char **argv) {
         goto cleanup;
     }
 
-    // 3. 高性能单线程无锁轮询
+    // 3. 单线程无锁轮询
+    int res_fd = -1;
+    time_t last_res_fetch = time(NULL);
+
     while (running) {
+        // 每 2s 计算一次四维聚合数据
+        if (res_fd < 0) {
+            res_fd = bpf_obj_get(RES_MAP_PIN_PATH);
+        }
+        
+        if (res_fd >= 0) {
+            time_t now = time(NULL);
+            if (now - last_res_fetch >= 2) {
+                last_res_fetch = now;
+                fetch_and_ship_resources(res_fd);
+            }
+        }
+
         int err = ring_buffer__poll(rb, 100);
-        if (err == -EINTR) break; // 被 Ctrl+C 打断
+        if (err == -EINTR) break; 
         if (err < 0) {
             fprintf(stderr, "[-] 轮询出错: %d\n", err);
             break;
@@ -126,6 +146,7 @@ int main(int argc, char **argv) {
 
 cleanup:
     // 关闭文件描述符 (仅仅是断开连接，不会销毁内核态的数据)
+    if (res_fd >= 0) close(res_fd);
     if (sys_fd >= 0) close(sys_fd);
     if (ssl_fd >= 0) close(ssl_fd);
     redis_shipper_close();

@@ -216,11 +216,21 @@ void attach_probes_dynamically(struct ssl_sniffer_bpf *skel, int *pids, int coun
                         if (!is_path_attached(lib_path)) {
                             printf("[*] [PID:%d] 发现新的 OpenSSL 动态库: %s\n", target_pid, lib_path);
                             ATTACH_UPROBE(skel, lib_path, "SSL_write", probe_SSL_rw_enter, false);
-                            ATTACH_UPROBE(skel, lib_path, "SSL_write_ex", probe_SSL_rw_enter, false);
+                            // SSL_write + SSL_read 标准函数
+                            ATTACH_UPROBE(skel, lib_path, "SSL_write", probe_SSL_rw_enter, false);
                             ATTACH_UPROBE(skel, lib_path, "SSL_write", probe_SSL_write_exit, true);
                             ATTACH_UPROBE(skel, lib_path, "SSL_read", probe_SSL_rw_enter, false);
                             ATTACH_UPROBE(skel, lib_path, "SSL_read", probe_SSL_read_exit, true);
-                            ATTACH_UPROBE(skel, lib_path, "SSL_read_ex", probe_SSL_rw_enter, false);
+
+                            // SSL_write_ex + SSL_read_ex 现代扩展函数
+                            ATTACH_UPROBE(skel, lib_path, "SSL_write_ex", probe_SSL_write_ex_enter, false);
+                            ATTACH_UPROBE(skel, lib_path, "SSL_write_ex", probe_SSL_write_ex_exit, true);
+                            ATTACH_UPROBE(skel, lib_path, "SSL_read_ex", probe_SSL_read_ex_enter, false);
+                            ATTACH_UPROBE(skel, lib_path, "SSL_read_ex", probe_SSL_read_ex_exit, true);
+
+                            // SSL_do_handshake
+                            ATTACH_UPROBE(skel, lib_path, "SSL_do_handshake", probe_SSL_do_handshake_enter, false);
+                            ATTACH_UPROBE(skel, lib_path, "SSL_do_handshake", probe_SSL_do_handshake_exit, true);
                             mark_path_attached(lib_path); // 记录已挂载
                         } else {
                             printf("[-] [PID:%d] 复用已挂载的 OpenSSL: %s\n", target_pid, lib_path);

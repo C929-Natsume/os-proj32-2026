@@ -30,49 +30,40 @@ static __always_inline bool is_claude_by_comm() {
     if (comm[0] == 'n' && comm[1] == 'o' && comm[2] == 'd') return true;
     if (comm[0] == 'B' && comm[1] == 'u' && comm[2] == 'n') return true;
 
-    // 3. 【核心修复】：放行 "python" 和 "python3"，为了我们的终极标准测试！
-    if (comm[0] == 'p' && comm[1] == 'y' && comm[2] == 't' && comm[3] == 'h') {
+    // 3. 匹配 "python" 和 "python3"
+    if (comm[0] == 'p' && comm[1] == 'y' && comm[2] == 't' &&
+        comm[3] == 'h' && comm[4] == 'o' && comm[5] == 'n') {
         return true;
     }
 
     return false;
 }
 
-// ================= 主过滤函数 =================
-// 返回 true 表示是 Claude 进程，需要放行捕获；返回 false 表示忽略
-static __always_inline bool is_claude_target() {
+static __always_inline bool try_auto_register(void *pid_map) {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 pid = pid_tgid >> 32;
 
-    // 1. 优先查 PID 白名单 Map（最高效）
+    if (!is_claude_by_comm())
+        return false;
+
+    struct process_context new_ctx = {0};
+    new_ctx.agent_id = AGENT_ID_AUTO_DETECT(pid);
+    new_ctx.is_sub_agent = 1;
+    new_ctx.parent_pid = 0;
+    new_ctx.depth = 0;
+    char default_name[] = "Auto-Agent";
+    __builtin_memcpy(new_ctx.agent_name, default_name, sizeof(default_name));
+
+    bpf_map_update_elem(pid_map, &pid, &new_ctx, BPF_ANY);
+    return true;
+}
+
+// 过滤进程
+static __always_inline bool is_claude_target() {
+    __u32 pid = bpf_get_current_pid_tgid() >> 32;
     struct process_context *ctx = bpf_map_lookup_elem(&claude_pid_map, &pid);
-    if (ctx) {
-        return true;
-    }
-
-    // 2. 如果 Map 里没有，检查进程名是否匹配
-    if (is_claude_by_comm()) {
-        // 发现是 Claude/Node/Python 进程后，将其 PID 动态加入白名单
-        struct process_context new_ctx = {0};
-        
-        // 赋予特殊的编号 9999，代表它是被内核态“嗅探”到的独立母体
-        // 区别于 Loader 主动发现并分配的 1000, 1001
-        new_ctx.agent_id = 9999;  
-        new_ctx.is_sub_agent = 1;
-        new_ctx.parent_pid = 0;
-        new_ctx.depth = 0;
-        
-        // 填入默认名称
-        char default_name[] = "Auto-Agent";
-        __builtin_memcpy(new_ctx.agent_name, default_name, sizeof(default_name));
-
-        // 写入 Map
-        bpf_map_update_elem(&claude_pid_map, &pid, &new_ctx, BPF_ANY);
-        
-        return true;
-    }
-
-    return false;
+    if (ctx) return true;
+    return try_auto_register(&claude_pid_map);
 }
 
 #endif /* __FILTER_H__ */

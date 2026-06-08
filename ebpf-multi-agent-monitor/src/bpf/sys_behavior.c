@@ -8,6 +8,7 @@
 #include "common.h"
 
 #define SYS_RB_PIN_PATH "/sys/fs/bpf/sys_rb"
+#define RES_MAP_PIN_PATH "/sys/fs/bpf/res_map"
 
 static struct sys_behavior_bpf *sys_skel = NULL;
 
@@ -39,6 +40,13 @@ int setup_sys_behavior(void) {
         return -1;
     }
 
+    // 钉固资源聚合 Map
+    bpf_map__unpin(sys_skel->maps.resource_map, RES_MAP_PIN_PATH);
+    err = bpf_map__pin(sys_skel->maps.resource_map, RES_MAP_PIN_PATH);
+    if (err) {
+        fprintf(stderr, "[SYS_BEHAVIOR] Failed to pin resource map to %s\n", RES_MAP_PIN_PATH);
+    }
+
     printf("[SYS_BEHAVIOR] 系统调用监控挂载成功，Ringbuf 钉固于: %s\n", SYS_RB_PIN_PATH);
     return 0;
 }
@@ -65,14 +73,16 @@ int register_agent_sys(int pid, __u32 agent_id, const char *agent_name) {
     strncpy(ctx.agent_name, agent_name, MAX_AGENT_NAME_LEN - 1);
     ctx.agent_name[MAX_AGENT_NAME_LEN - 1] = '\0'; 
 
-    int map_fd = bpf_map__fd(sys_skel->maps.monitored_pids);
-    
-    return bpf_map_update_elem(map_fd, &pid, &ctx, BPF_ANY);
+    return bpf_map__update_elem(sys_skel->maps.monitored_pids,
+        &pid, sizeof(pid),
+        &ctx, sizeof(ctx),
+        BPF_ANY);
 }
 
 void teardown_sys_behavior(void) {
     if (sys_skel) {
         bpf_map__unpin(sys_skel->maps.rb, SYS_RB_PIN_PATH);
+        bpf_map__unpin(sys_skel->maps.resource_map, RES_MAP_PIN_PATH);
         sys_behavior_bpf__destroy(sys_skel);
         sys_skel = NULL;
         printf("[SYS_BEHAVIOR] 已卸载清理系统调用监控探针。\n");
