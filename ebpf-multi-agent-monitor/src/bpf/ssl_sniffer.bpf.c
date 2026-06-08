@@ -3,7 +3,7 @@
 #include <bpf_endian.h>
 #include <bpf_helpers.h>
 #include <bpf_tracing.h>
-#include "ssl_sniffer.h"
+#include "common.h"
 
 #define MAX_ENTRIES 10240
 
@@ -28,6 +28,13 @@ struct {
     __type(key, __u32);
     __type(value, void*);
 } bufs SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10240);
+    __type(key, __u32);   // PID
+    __type(value, struct process_context); 
+} agent_info_map SEC(".maps");
 
 // 专门用于暂存 SSL_read_ex / SSL_write_ex 的 size_t* readbytes 参数
 struct {
@@ -67,6 +74,16 @@ static __always_inline int process_data_exit(void *buf, int len, int rw, bool is
 
     struct probe_SSL_data_t *data = bpf_ringbuf_reserve(&rb, sizeof(*data), 0);
     if (!data) return 0;
+
+    // ================= 核心修改：注入身份标识 =================
+    struct process_context *ctx = bpf_map_lookup_elem(&agent_info_map, &pid);
+    if (ctx) {
+        data->agent_id = ctx->agent_id;
+        __builtin_memcpy(data->agent_name, ctx->agent_name, MAX_AGENT_NAME_LEN);
+    } else {
+        data->agent_id = 0;
+        data->agent_name[0] = '\0';
+    }
 
     data->timestamp_ns = ts;
     data->delta_ns = delta_ns;

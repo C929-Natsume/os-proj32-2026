@@ -17,21 +17,28 @@ struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 10240);
     __type(key, __u32);   // 进程 PID
-    __type(value, __u8);  // 是否受监控标志
+    __type(value, struct process_context);  // 是否受监控标志
 } monitored_pids SEC(".maps");
 
 // 自适应判定引擎
 static __always_inline bool should_monitor(__u32 pid) {
-    // 1. 如果在血缘名册里，直接放行（无视它的进程名叫什么）
-    __u8 *is_monitored = bpf_map_lookup_elem(&monitored_pids, &pid);
-    if (is_monitored && *is_monitored == 1) {
+    // 在名册，放行
+    struct process_context *ctx = bpf_map_lookup_elem(&monitored_pids, &pid);
+    if (ctx) {
         return true;
     }
     
-    // 2. 如果不在名册里，但进程名符合原始母体特征 (python/claude/node)，把它加入名册
+    // 不在名册但进程名符合原始母体特征，加入名册
     if (is_claude_target()) {
-        __u8 val = 1;
-        bpf_map_update_elem(&monitored_pids, &pid, &val, BPF_ANY);
+        struct process_context new_ctx = {0};
+        new_ctx.agent_id = 9999; // 给内核自动嗅探到的母体分配 9999
+        new_ctx.is_sub_agent = 1;
+        new_ctx.parent_pid = 0;
+        new_ctx.depth = 0;
+        char default_name[] = "Auto-Agent";
+        __builtin_memcpy(new_ctx.agent_name, default_name, sizeof(default_name));
+        
+        bpf_map_update_elem(&monitored_pids, &pid, &new_ctx, BPF_ANY);
         return true;
     }
     
@@ -42,8 +49,9 @@ static __always_inline bool should_monitor(__u32 pid) {
 static __always_inline void submit_sys_event(__u32 event_type, __u64 pid_tgid, const char *filename) {
     __u32 pid = pid_tgid >> 32;
     
-    // 【核心拦截】：使用血缘名册进行判断
-    if (!should_monitor(pid)) return; 
+    // 查找该进程所属的智能体上下文
+    struct process_context *ctx = bpf_map_lookup_elem(&monitored_pids, &pid);
+    if (!ctx) return; // 不在监控名册中，直接放行
 
     struct sys_event *event = bpf_ringbuf_reserve(&rb, sizeof(*event), 0);
     if (!event) return;
@@ -53,6 +61,10 @@ static __always_inline void submit_sys_event(__u32 event_type, __u64 pid_tgid, c
     event->timestamp = bpf_ktime_get_ns();
     bpf_get_current_comm(&event->comm, sizeof(event->comm));
     event->child_pid = 0; 
+
+    // 将查到的身份信息注入到传给用户态的事件中
+    event->agent_id = ctx->agent_id;
+    __builtin_memcpy(event->agent_name, ctx->agent_name, MAX_AGENT_NAME_LEN);
 
     if (filename) {
         bpf_probe_read_user_str(&event->filename, sizeof(event->filename), filename);
@@ -123,16 +135,23 @@ int trace_sched_process_fork(struct trace_event_raw_sched_process_fork *ctx) {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 parent_pid = pid_tgid >> 32;
 
-    // 只有在名册里的父亲，才有资格传承血缘
-    if (!should_monitor(parent_pid)) return 0;
+    // 查找父进程的上下文
+    struct process_context *parent_ctx = bpf_map_lookup_elem(&monitored_pids, &parent_pid);
+    if (!parent_ctx) return 0;
 
     __u32 child_pid = ctx->child_pid; 
 
-    // 将子进程的 PID 写入监控名册
-    __u8 val = 1;
-    bpf_map_update_elem(&monitored_pids, &child_pid, &val, BPF_ANY);
+    // 子进程写入监控名册
+    struct process_context child_ctx = {0};
+    child_ctx.agent_id = parent_ctx->agent_id; 
+    __builtin_memcpy(child_ctx.agent_name, parent_ctx->agent_name, MAX_AGENT_NAME_LEN);
+    child_ctx.parent_pid = parent_pid;
+    child_ctx.depth = parent_ctx->depth + 1;
+    child_ctx.is_sub_agent = 0; // 默认视为普通系统工具
 
-    // 通知 trace 进行语义上下文的继承
+    bpf_map_update_elem(&monitored_pids, &child_pid, &child_ctx, BPF_ANY);
+
+    // trace 进行语义上下文的继承
     struct sys_event *event = bpf_ringbuf_reserve(&rb, sizeof(*event), 0);
     if (!event) return 0;
 
@@ -142,6 +161,9 @@ int trace_sched_process_fork(struct trace_event_raw_sched_process_fork *ctx) {
     event->timestamp = bpf_ktime_get_ns();
     bpf_get_current_comm(&event->comm, sizeof(event->comm));
     event->filename[0] = '\0';
+    
+    event->agent_id = parent_ctx->agent_id;
+    __builtin_memcpy(event->agent_name, parent_ctx->agent_name, MAX_AGENT_NAME_LEN);
 
     bpf_ringbuf_submit(event, 0);
     return 0;

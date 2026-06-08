@@ -10,6 +10,11 @@ struct sys_event {
     __u32 child_pid;
     __u32 uid;
     __u64 timestamp;
+
+    // 新增：智能体身份标识
+    __u32 agent_id;
+    char agent_name[MAX_AGENT_NAME_LEN];
+
     char comm[MAX_COMM_LEN];
     char filename[MAX_PATH_LEN];
     union {

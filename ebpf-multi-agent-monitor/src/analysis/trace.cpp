@@ -50,27 +50,27 @@ private:
     std::unordered_map<uint32_t, AgentContext> context_map;
 
 public:
-    void update_prompt(uint32_t pid, const std::string& prompt, uint64_t timestamp) {
-        context_map[pid].last_prompt = prompt;
-        context_map[pid].accumulated_res = ""; 
-        context_map[pid].timestamp = timestamp;
-        std::cout << "\n🟢 [用户输入 | Prompt] PID: " << pid << " 发现目标语义特征!\n" 
+    void update_prompt(uint32_t agent_no, const std::string& prompt, uint64_t timestamp) {
+        context_map[agent_no].last_prompt = prompt;
+        context_map[agent_no].accumulated_res = ""; 
+        context_map[agent_no].timestamp = timestamp;
+        std::cout << "\n🟢 [用户输入 | Prompt] PID: " << agent_no << " 发现目标语义特征!\n" 
                   << "  -> " << prompt << "\n";
     }
 
-    void append_response(uint32_t pid, const std::string& response_chunk) {
-        if (context_map.find(pid) == context_map.end()) return;
-        if (context_map[pid].accumulated_res.length() < 1000) { 
-            context_map[pid].accumulated_res += response_chunk + " ";
-            std::cout << "🟣 [大模型输出 | Response] PID: " << pid << " 收到回复:\n" 
+    void append_response(uint32_t agent_no, const std::string& response_chunk) {
+        if (context_map.find(agent_no) == context_map.end()) return;
+        if (context_map[agent_no].accumulated_res.length() < 1000) { 
+            context_map[agent_no].accumulated_res += response_chunk + " ";
+            std::cout << "🟣 [大模型输出 | Response] PID: " << agent_no << " 收到回复:\n" 
                       << "  <- " << response_chunk << "\n";
         }
     }
 
-    std::string get_full_context(uint32_t pid) {
-        if (context_map.find(pid) != context_map.end() && !context_map[pid].last_prompt.empty()) {
-            std::string ctx = "Q: " + context_map[pid].last_prompt;
-            if (!context_map[pid].accumulated_res.empty()) ctx += " | A: " + context_map[pid].accumulated_res;
+    std::string get_full_context(uint32_t agent_no) {
+        if (context_map.find(agent_no) != context_map.end() && !context_map[agent_no].last_prompt.empty()) {
+            std::string ctx = "Q: " + context_map[agent_no].last_prompt;
+            if (!context_map[agent_no].accumulated_res.empty()) ctx += " | A: " + context_map[agent_no].accumulated_res;
             return ctx;
         }
         return "无明确语义上下文";
@@ -162,46 +162,6 @@ private:
         return outstring;
     }
 
-    // // 【新增】: JSON 文本提取器
-    // std::string extract_pure_text(const std::string& payload) {
-    //     std::string result;
-        
-    //     // 匹配 Claude/OpenAI 的核心文本字段
-    //     std::vector<std::string> keys = {"\"text\":\"", "\"content\":\""};
-        
-    //     for (const auto& key : keys) {
-    //         size_t pos = 0;
-    //         while ((pos = payload.find(key, pos)) != std::string::npos) {
-    //             pos += key.length();
-    //             std::string chunk;
-                
-    //             // 提取直到下一个未转义的双引号
-    //             while (pos < payload.length()) {
-    //                 if (payload[pos] == '"' && payload[pos - 1] != '\\') break;
-    //                 chunk += payload[pos];
-    //                 pos++;
-    //             }
-                
-    //             // 简单的反转义处理 (将 \n 还原为换行，\" 还原为引号)
-    //             std::string unescaped;
-    //             for (size_t i = 0; i < chunk.length(); i++) {
-    //                 if (chunk[i] == '\\' && i + 1 < chunk.length()) {
-    //                     if (chunk[i+1] == 'n') { unescaped += ' '; i++; } // 把换行变空格，方便一行展示
-    //                     else if (chunk[i+1] == '"') { unescaped += '"'; i++; }
-    //                     else { unescaped += chunk[i]; }
-    //                 } else {
-    //                     unescaped += chunk[i];
-    //                 }
-    //             }
-                
-    //             // 过滤掉系统内部的脚手架指令
-    //             if (unescaped.length() > 0 && unescaped.find("content_block_delta") == std::string::npos) {
-    //                 result += unescaped;
-    //             }
-    //         }
-    //     }
-    //     return result;
-    // }
     // 【修改后】: 极简且强壮的 JSON 文本提取器 (专治 eBPF 截断包与 SSE 数据流)
     std::string extract_pure_text(const std::string& payload, uint32_t e_type) {
         std::string result;
@@ -390,40 +350,49 @@ public:
     void process_event(const std::string& json_str) {
         try {
             json event = json::parse(json_str);
-            uint32_t e_type = event["type"];
-            uint32_t pid = event["pid"];
-            uint64_t timestamp = event["timestamp"];
+            
+            // 1. 获取外层通用身份字段
+            std::string agent_name = event.value("agent_name", "Unknown");
+            uint32_t agent_no = event.value("agent_no", 0);
+            uint32_t behavior_no = event.value("behavior_no", 0);
+            uint64_t timestamp = event.value("timestamp", 0);
 
-            if (e_type == EVENT_SSL_WRITE || e_type == EVENT_SSL_READ) {
-                std::string b64_payload = event.value("data", "");
+            // 2. 获取嵌套的操作层 operation
+            auto op = event.value("operation", json::object());
+            uint32_t pid = op.value("pid", 0);
+            std::string comm = op.value("comm", "unknown");
+
+            // 3. 处理网络行为 (SSL)
+            if (behavior_no == EVENT_SSL_WRITE || behavior_no == EVENT_SSL_READ) {
+                std::string b64_payload = event.value("network_payload", "");
                 if (!b64_payload.empty()) {
                     std::string raw_payload = base64_decode(b64_payload);
-                    sniff_semantic_payload(pid, e_type, raw_payload, timestamp);
+                    // 传入 agent_no 而不是 pid，实现跨 PID 的 Agent 语义聚合
+                    sniff_semantic_payload(agent_no, behavior_no, raw_payload, timestamp);
                 }
             }
-            else if (e_type == EVENT_FORK) {
-                if (event.contains("child_pid")) tracker.track_fork(pid, event["child_pid"]);
-            }
-            else if (e_type >= EVENT_EXECVE && e_type <= EVENT_CONNECT) {
+            // 4. 处理系统行为
+            else if (behavior_no >= EVENT_EXECVE && behavior_no <= EVENT_CONNECT) {
                 std::string action_desc = "";
-                // 【修复空白动作 BUG】
-                if (e_type == EVENT_EXECVE) action_desc = "执行命令: " + event.value("filename", "");
-                else if (e_type == EVENT_OPEN) action_desc = "打开文件: " + event.value("filename", "");
-                else if (e_type == EVENT_UNLINK) action_desc = "删除文件: " + event.value("filename", "");
-                else if (e_type == EVENT_CONNECT) action_desc = "发起底层网络连接 (Socket Connect)";
+                if (behavior_no == EVENT_EXECVE) action_desc = "执行命令: " + op.value("target_file", "");
+                else if (behavior_no == EVENT_OPEN) action_desc = "访问文件: " + op.value("target_file", "");
+                else if (behavior_no == EVENT_CONNECT) action_desc = "网络连接至: " + op.value("dip", "") + ":" + std::to_string(op.value("dport", 0));
                 
-                std::string motive = tracker.get_full_context(pid);
+                // 获取该 Agent 的语义上下文
+                std::string motive = tracker.get_full_context(agent_no);
                 
-                std::cout << "[" << format_time(timestamp) << "] 🚨 [跨层缝合告警] \n"
-                          << "  -> PID: " << pid << "\n"
+                std::cout << "[" << format_time(timestamp) << "] 🚨 [智能体审计] \n"
+                          << "  -> Agent: " << agent_name << " (ID: " << agent_no << ")\n"
+                          << "  -> PID: " << pid << " (" << comm << ")\n"
                           << "  -> 动作: " << action_desc << "\n"
-                          << "  -> 完整动机链: " << motive << "\n\n";
+                          << "  -> 语义上下文: " << motive << "\n\n";
             }
-        } catch (...) {}
+        } catch (const json::parse_error& e) {
+            std::cerr << "JSON 解析错误: " << e.what() << std::endl;
+        }
     }
-
     void run() {
-        std::cout << "🟢 C++ 智能体审计大脑 [X-Ray 透视雷达版] 启动成功！\n";
+        std::cout << "🟢 C++ Trace && SSL_FETCH 启动成功！\n";
         redisReply* reply = (redisReply*)redisCommand(redis_ctx, "SUBSCRIBE ebpf_events");
         if (reply) freeReplyObject(reply);
 

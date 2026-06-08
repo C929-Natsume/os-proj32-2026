@@ -12,7 +12,7 @@ struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 10240);
     __type(key, __u32);   // PID
-    __type(value, __u8);  // 1 = 允许 (是 claude)
+    __type(value, struct process_context);
 } claude_pid_map SEC(".maps");
 
 // 辅助函数：通过进程名 (comm) 判断是否是目标
@@ -45,17 +45,30 @@ static __always_inline bool is_claude_target() {
     __u32 pid = pid_tgid >> 32;
 
     // 1. 优先查 PID 白名单 Map（最高效）
-    __u8 *allowed = bpf_map_lookup_elem(&claude_pid_map, &pid);
-    if (allowed && *allowed == 1) {
+    struct process_context *ctx = bpf_map_lookup_elem(&claude_pid_map, &pid);
+    if (ctx) {
         return true;
     }
 
     // 2. 如果 Map 里没有，检查进程名是否匹配
     if (is_claude_by_comm()) {
-        // 发现是 Claude/Node 进程后，将其 PID 动态加入白名单
-        // 这样该进程后续的系统调用和 SSL 读写将享受 O(1) 的极速放行
-        __u8 val = 1;
-        bpf_map_update_elem(&claude_pid_map, &pid, &val, BPF_ANY);
+        // 发现是 Claude/Node/Python 进程后，将其 PID 动态加入白名单
+        struct process_context new_ctx = {0};
+        
+        // 赋予特殊的编号 9999，代表它是被内核态“嗅探”到的独立母体
+        // 区别于 Loader 主动发现并分配的 1000, 1001
+        new_ctx.agent_id = 9999;  
+        new_ctx.is_sub_agent = 1;
+        new_ctx.parent_pid = 0;
+        new_ctx.depth = 0;
+        
+        // 填入默认名称
+        char default_name[] = "Auto-Agent";
+        __builtin_memcpy(new_ctx.agent_name, default_name, sizeof(default_name));
+
+        // 写入 Map
+        bpf_map_update_elem(&claude_pid_map, &pid, &new_ctx, BPF_ANY);
+        
         return true;
     }
 

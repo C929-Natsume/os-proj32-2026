@@ -1,10 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <bpf/libbpf.h>
 #include <bpf/bpf.h>
 #include "sys_behavior.skel.h"
-#include "sys_behavior.h"
+#include "common.h"
 
 #define SYS_RB_PIN_PATH "/sys/fs/bpf/sys_rb"
 
@@ -40,6 +41,33 @@ int setup_sys_behavior(void) {
 
     printf("[SYS_BEHAVIOR] 系统调用监控挂载成功，Ringbuf 钉固于: %s\n", SYS_RB_PIN_PATH);
     return 0;
+}
+
+// 注册智能体身份到内核 Map
+/**
+ * 将 loader.c 分配的智能体编号和名称注入到 sys_behavior.bpf.c 的 monitored_pids 表
+ * * @param pid 目标智能体的物理进程 PID
+ * @param agent_id 分配给该智能体的唯一数字编号
+ * @param agent_name 分配给该智能体的文本名称
+ */
+int register_agent_sys(int pid, __u32 agent_id, const char *agent_name) {
+    if (!sys_skel) {
+        fprintf(stderr, "[-] register_agent_sys: Skeleton not loaded!\n");
+        return -1;
+    }
+    
+    struct process_context ctx = {0};
+    ctx.agent_id = agent_id;
+    ctx.is_sub_agent = 1; // 标记为智能体本身
+    ctx.parent_pid = 0;   // 根节点没有父进程
+    ctx.depth = 0;
+    
+    strncpy(ctx.agent_name, agent_name, MAX_AGENT_NAME_LEN - 1);
+    ctx.agent_name[MAX_AGENT_NAME_LEN - 1] = '\0'; 
+
+    int map_fd = bpf_map__fd(sys_skel->maps.monitored_pids);
+    
+    return bpf_map_update_elem(map_fd, &pid, &ctx, BPF_ANY);
 }
 
 void teardown_sys_behavior(void) {

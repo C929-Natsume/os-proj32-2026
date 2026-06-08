@@ -18,6 +18,11 @@ struct probe_SSL_data_t {
     __u32 pid;
     __u32 tid;
     __u32 uid;
+
+    // 新增：智能体身份标识
+    __u32 agent_id;
+    char agent_name[MAX_AGENT_NAME_LEN];
+
     __u32 len;             // 数据实际长度
     __u32 buf_size;        // 拷贝到 eBPF 的安全截断长度
     int buf_filled;        // 标志位：是否成功拷贝数据
