@@ -2,6 +2,7 @@
 #include <bpf_helpers.h>
 #include <bpf_tracing.h>
 #include <bpf_core_read.h>
+#include <bpf_endian.h>
 #include "common.h"
 #include "filter.h"
 
@@ -78,6 +79,105 @@ static __always_inline void submit_sys_event(__u32 event_type, __u64 pid_tgid, c
     bpf_ringbuf_submit(event, 0);
 }
 
+// IP地址
+static __always_inline void format_ipv4_str(__be32 addr, char *out) {
+    __u32 a = addr;
+    #pragma unroll
+    for (int i = 0; i < 4; i++) {
+        __u8 b = (a >> (24 - i * 8)) & 0xFF;
+        if (b >= 100) {
+            *out++ = '0' + (b / 100);
+            *out++ = '0' + ((b / 10) % 10);
+            *out++ = '0' + (b % 10);
+        } else if (b >= 10) {
+            *out++ = '0' + (b / 10);
+            *out++ = '0' + (b % 10);
+        } else {
+            *out++ = '0' + b;
+        }
+        if (i < 3)
+            *out++ = '.';
+    }
+    *out = '\0';
+}
+
+// 从 sockaddr 中提取目标 IP 与端口
+static __always_inline void submit_connect_event(__u64 pid_tgid,
+                                                  struct sockaddr *uservaddr,
+                                                  int addrlen) {
+    __u32 pid = pid_tgid >> 32;
+
+    struct process_context *ctx = bpf_map_lookup_elem(&monitored_pids, &pid);
+    if (!ctx) {
+        if (is_claude_target()) {
+            ctx = bpf_map_lookup_elem(&monitored_pids, &pid);
+            if (!ctx)
+                return;
+        } else {
+            return;
+        }
+    }
+
+    struct sys_event *event = bpf_ringbuf_reserve(&rb, sizeof(*event), 0);
+    if (!event)
+        return;
+
+    event->event_type = EVENT_CONNECT;
+    event->pid = pid;
+    event->timestamp = bpf_ktime_get_ns();
+    bpf_get_current_comm(&event->comm, sizeof(event->comm));
+    event->child_pid = 0;
+    event->filename[0] = '\0';
+
+    event->agent_id = ctx->agent_id;
+    __builtin_memcpy(event->agent_name, ctx->agent_name, MAX_AGENT_NAME_LEN);
+
+    event->connect.family = 0;
+    event->connect.dport = 0;
+    event->connect.dip[0] = '\0';
+
+    // 参数合法性校验
+    if (!uservaddr || addrlen <= 0 || addrlen > 128)
+        goto submit;
+
+    // 读取地址族
+    unsigned short family;
+    if (bpf_probe_read_user(&family, sizeof(family),
+                            &uservaddr->sa_family) != 0)
+        goto submit;
+
+    event->connect.family = family;
+
+    // 提取 IP 与端口
+    if (family == 2) { // AF_INET (IPv4)
+        struct sockaddr_in sin = {0};
+        if (bpf_probe_read_user(&sin, sizeof(sin), uservaddr) == 0) {
+            event->connect.dport = bpf_ntohs(sin.sin_port);
+            format_ipv4_str(sin.sin_addr.s_addr, event->connect.dip);
+        }
+    } else if (family == 10) { // AF_INET6 (IPv6)
+        struct sockaddr_in6 sin6 = {0};
+        if (bpf_probe_read_user(&sin6, sizeof(sin6), uservaddr) == 0) {
+            event->connect.dport = bpf_ntohs(sin6.sin6_port);
+            __u8 *raw = (__u8 *)&sin6.sin6_addr;
+            #pragma unroll
+            for (int i = 0; i < 16; i++) {
+                __u8 hi = (raw[i] >> 4) & 0xF;
+                __u8 lo = raw[i] & 0xF;
+                int pos = i * 2;
+                event->connect.dip[pos] =
+                    hi < 10 ? '0' + hi : 'a' + (hi - 10);
+                event->connect.dip[pos + 1] =
+                    lo < 10 ? '0' + lo : 'a' + (lo - 10);
+            }
+            event->connect.dip[32] = '\0';
+        }
+    }
+
+submit:
+    bpf_ringbuf_submit(event, 0);
+}
+
 //  命令执行监控
 SEC("ksyscall/execve")
 int BPF_KSYSCALL(sys_execve, const char *filename, const char *const *argv, const char *const *envp) {
@@ -120,7 +220,7 @@ int BPF_KSYSCALL(sys_unlink, const char *pathname) {
 // 底层网络连接监控
 SEC("ksyscall/connect")
 int BPF_KSYSCALL(sys_connect, int fd, struct sockaddr *uservaddr, int addrlen) {
-    submit_sys_event(EVENT_CONNECT, bpf_get_current_pid_tgid(), NULL);
+    submit_connect_event(bpf_get_current_pid_tgid(), uservaddr, addrlen);
     return 0;
 }
 
