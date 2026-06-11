@@ -1,63 +1,56 @@
-BPF_SRCS = ../bpf/sys_behavior.bpf.c ../bpf/ssl_sniffer.bpf.c
-SKEL_SRCS = sys_behavior.skel.h ssl_sniffer.skel.h
-USER_SRCS = loader.c ringbuf_handler.c redis_shipper.c
-COMMON_HDR = ../bpf/common.h
-VMLINUX_H = ../bpf/vmlinux.h
+BPF_DIR = ../bpf
+USER_DIR = .
 
-ROOT_DIR := $(abspath ../../..)
-LIBBPF_DIR := $(ROOT_DIR)/libbpf
-LIBBPF_SRC := $(LIBBPF_DIR)/src
-LIBBPF_BUILD_DIR ?= $(LIBBPF_DIR)/build
-LIBBPF_STATIC := $(LIBBPF_BUILD_DIR)/libbpf.a
-BPFTOOL_BIN := $(ROOT_DIR)/bpftool/src/bpftool
+BPF_SRCS = $(BPF_DIR)/sys_behavior.bpf.c $(BPF_DIR)/ssl_sniffer.bpf.c
+SKEL_SRCS = $(BPF_DIR)/sys_behavior.skel.h $(BPF_DIR)/ssl_sniffer.skel.h
+BPF_OBJS = $(BPF_DIR)/sys_behavior.bpf.o $(BPF_DIR)/ssl_sniffer.bpf.o
+
+COMMON_HDR = $(BPF_DIR)/common.h
+VMLINUX_H = $(BPF_DIR)/vmlinux.h
+
+MODULE_SRCS = $(BPF_DIR)/sys_behavior.c $(BPF_DIR)/ssl_sniffer.c
 
 BPF_CLANG = clang
-BPF_FLAGS = -target bpf -D__TARGET_ARCH_x86 -I../bpf \
-            -I$(LIBBPF_DIR)/include \
-            -I$(LIBBPF_SRC)
-BPFTOOL = $(BPFTOOL_BIN)
+BPF_FLAGS = -target bpf -D__TARGET_ARCH_x86 -I$(BPF_DIR) \
+            -I/home/gabriel/comp/project3136859-387615/libbpf/include \
+            -I/home/gabriel/comp/project3136859-387615/libbpf/src
+BPFTOOL = /home/gabriel/comp/project3136859-387615/bpftool/src/bpftool
 
 CC = gcc
 CFLAGS = -Wall -Wextra \
-         -I../bpf \
-         -I$(LIBBPF_DIR)/include \
-         -I$(LIBBPF_SRC)
-LDFLAGS = $(LIBBPF_STATIC) -lelf -lz
+         -I$(BPF_DIR) \
+         -I/home/gabriel/comp/project3136859-387615/libbpf/include \
+         -I/home/gabriel/comp/project3136859-387615/libbpf/src \
+         -I/home/gabriel/comp/project3136859-387615/bpftool/src/libbpf/include
+LDFLAGS = -L/home/gabriel/comp/project3136859-387615/libbpf/src -lbpf -lelf -lz
 
 all: skeletons user_programs
 
-%.skel.h: ../bpf/%.bpf.c $(COMMON_HDR) $(VMLINUX_H)
+$(BPF_DIR)/%.skel.h: $(BPF_DIR)/%.bpf.c $(COMMON_HDR) $(VMLINUX_H)
 	@echo "[MAKE] Compiling $< to BPF object..."
-	$(BPF_CLANG) $(BPF_FLAGS) -O2 -g -c $< -o $(basename $(notdir $<)).bpf.o
+	$(BPF_CLANG) $(BPF_FLAGS) -O2 -g -c $< -o $(BPF_DIR)/$*.bpf.o
 	@echo "[MAKE] Fixing .rodata.str1.1 section for compatibility..."
-	@llvm-objcopy --rename-section .rodata.str1.1=.rodata $(basename $(notdir $<)).bpf.o 2>/dev/null || true
+	@llvm-objcopy --rename-section .rodata.str1.1=.rodata $(BPF_DIR)/$*.bpf.o 2>/dev/null || true
 	@echo "[MAKE] Generating skeleton $@..."
-	$(BPFTOOL) gen skeleton $(basename $(notdir $<)).bpf.o > $@
-	@sed -i 's#<bpf/libbpf.h>#"libbpf.h"#g' $@
+	$(BPFTOOL) gen skeleton $(BPF_DIR)/$*.bpf.o name $*_bpf > $@
 
 skeletons: $(SKEL_SRCS)
-	@echo "[MAKE] BPF skeleton generation complete"
+	@echo "[MAKE] BPF skeleton generation complete in $(BPF_DIR)/"
 
-$(LIBBPF_STATIC):
-	@echo "[MAKE] Building local libbpf..."
-	$(MAKE) -C $(LIBBPF_SRC) OBJDIR=$(LIBBPF_BUILD_DIR) EXTRA_CFLAGS='-Wno-error=discarded-qualifiers'
-
-# 修改点 1：loader 现在负责加载 BPF，因此依赖骨架 $(SKEL_SRCS)，且需要链接 $(LDFLAGS)
-loader: loader.c $(SKEL_SRCS) $(LIBBPF_STATIC)
+loader: loader.c $(MODULE_SRCS) $(SKEL_SRCS)
 	@echo "[MAKE] Compiling loader (eBPF Loader & Map Pinner)..."
-	$(CC) $(CFLAGS) -o loader loader.c $(LDFLAGS)
+	$(CC) $(CFLAGS) -o loader loader.c $(MODULE_SRCS) $(LDFLAGS)
 
-# 修改点 2：ringbuf_handler 使用 redis-cli 发布，不依赖 hiredis 开发包
-ringbuf_handler: ringbuf_handler.c redis_shipper.c $(LIBBPF_STATIC)
-	@echo "[MAKE] Compiling ringbuf_handler (Event Consumer & Redis-CLI Shipper)..."
-	$(CC) $(CFLAGS) -o ringbuf_handler ringbuf_handler.c redis_shipper.c $(LDFLAGS)
+ringbuf_handler: ringbuf_handler.c redis_shipper.c
+	@echo "[MAKE] Compiling ringbuf_handler (Event Consumer & Redis Shipper)..."
+	$(CC) $(CFLAGS) -o ringbuf_handler ringbuf_handler.c redis_shipper.c $(LDFLAGS) -lhiredis
 
 user_programs: loader ringbuf_handler
 	@echo "[MAKE] User programs built successfully"
 
 clean:
 	@echo "[MAKE] Cleaning build artifacts..."
-	@rm -f *.bpf.o *.skel.h
+	@rm -f $(BPF_OBJS) $(SKEL_SRCS)
 	@rm -f loader ringbuf_handler
 	@echo "[MAKE] Clean complete"
 

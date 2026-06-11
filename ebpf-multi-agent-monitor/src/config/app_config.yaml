@@ -35,8 +35,3 @@ logging:
   ebpf_log_dir: ../../logs/ebpf_log
   llm_log_dir: ../../logs/llm_log
   alert_log_dir: ../../logs/alerts
-
-storage:
-  sqlite:
-    enabled: true
-    path: ../../logs/alerts/analysis.db
