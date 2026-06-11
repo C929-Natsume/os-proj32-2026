@@ -20,6 +20,7 @@ class IntraAgentAnalyzer:
     def __init__(self):
         print("[INTRA] 初始化单体分析器...")
         self.workspace_root = os.environ.get("MONITOR_WORKSPACE", "/mnt/e/os2026")
+        self.home_dir = os.path.expanduser("~")
         self.sensitive_markers = [
             "/etc/shadow",
             "/etc/passwd",
@@ -32,6 +33,16 @@ class IntraAgentAnalyzer:
             ".env",
         ]
         self.shell_bins = {"sh", "bash", "zsh", "dash", "fish", "ksh", "csh", "tcsh"}
+        self.benign_read_prefixes = [
+            "/proc/",
+            "/sys/",
+        ]
+        self.benign_state_prefixes = [
+            os.path.join(self.home_dir, ".claude") + "/",
+            os.path.join(self.home_dir, ".codex") + "/",
+            os.path.join(self.home_dir, ".gemini") + "/",
+            os.path.join(self.home_dir, ".config", "gemini") + "/",
+        ]
         self.agent_stats = {}
         self.req_seq = 0
 
@@ -105,6 +116,20 @@ class IntraAgentAnalyzer:
             or path.startswith("/tmp/")
             or path.startswith("/var/tmp/")
         )
+
+    def _path_is_benign_read(self, path):
+        if not path:
+            return False
+        return any(path.startswith(prefix) for prefix in self.benign_read_prefixes)
+
+    def _path_is_benign_state(self, path):
+        if not path:
+            return False
+        return any(path.startswith(prefix) for prefix in self.benign_state_prefixes)
+
+    @staticmethod
+    def _is_invalid_endpoint(dip, dport):
+        return not dip or dip == "0.0.0.0" or int(dport or 0) <= 0
 
     def _is_shell_exec(self, path):
         base = os.path.basename(path or "")
@@ -205,6 +230,7 @@ class IntraAgentAnalyzer:
                 )
             if (
                 not self._path_is_workspace_or_tmp(path)
+                and not self._path_is_benign_state(path)
                 and ts_ns - s["last_workspace_alert_ns"] >= self.event_alert_cooldown_ns
             ):
                 s["last_workspace_alert_ns"] = ts_ns
@@ -219,12 +245,18 @@ class IntraAgentAnalyzer:
                 )
 
         elif event_type == EVENT_CONNECT:
-            # 基础计数
-            s["net_connect_cnt"] += 1
-            
             # 【新增】：提取 C 语言传过来的网络目标，可以留作后续大模型威胁情报查询的物料
             dip = event_data.get('dip', '0.0.0.0')
             dport = event_data.get('dport', 0)
+
+            if self._is_invalid_endpoint(dip, dport):
+                loop_req = self._maybe_loop_req(event_data, s)
+                if loop_req is not None:
+                    reqs.append(loop_req)
+                return reqs
+
+            # 基础计数
+            s["net_connect_cnt"] += 1
             
             # 防刷屏控制：每 5 秒最多报一次可疑网络连接
             if ts_ns - s.get("last_network_alert_ns", 0) >= self.event_alert_cooldown_ns:
