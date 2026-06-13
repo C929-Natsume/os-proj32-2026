@@ -55,3 +55,85 @@ intra_agent:
   gray_rules:
     - POSSIBLE_LOGIC_LOOP
   llm_allow_suppress_rules: []
+
+inter_agent:
+  window_sec: 30
+  cooldown_sec: 5
+  high_api_connect_threshold: 20
+  fork_threshold: 10
+  io_storm_threshold: 40
+  short_ssl_len_threshold: 64
+  short_ssl_burst_threshold: 12
+  repeat_payload_threshold: 3
+  resource_contention_active_agents: 4
+  resource_contention_event_threshold: 120
+  correlation_window_sec: 15
+  workspace_root: /mnt/e/os2026
+  allowed_ports:
+    - 80
+    - 443
+  allowed_private_cidrs:
+    - 127.0.0.0/8
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+  sensitive_path_markers:
+    - /etc/shadow
+    - /etc/passwd
+    - /etc/sudoers
+    - /.ssh/
+    - /.aws/credentials
+    - /.kube/config
+    - .env
+    - /var/run/docker.sock
+  shell_bins:
+    - sh
+    - bash
+    - zsh
+    - dash
+    - fish
+    - ksh
+    - csh
+    - tcsh
+  interpreter_bins:
+    - sh
+    - bash
+    - zsh
+    - python
+    - python3
+    - perl
+    - ruby
+    - node
+    - php
+  download_bins:
+    - curl
+    - wget
+  prompt_injection_markers:
+    - ignore previous instructions
+    - ignore all previous instructions
+    - system prompt
+    - developer message
+    - reveal secrets
+    - bypass
+    - jailbreak
+  high_risk_instruction_markers:
+    - rm -rf
+    - delete all files
+    - sudo reboot
+    - sudo rm
+    - chmod 777
+    - curl http
+    - wget http
+    - /etc/shadow
+    - id_rsa
+  loop_markers:
+    - continue
+    - retry
+    - again
+    - repeat
+    - try again
+  mining_markers:
+    - xmrig
+    - stratum
+    - cryptonight
+    - miner
