@@ -12,18 +12,18 @@ MODULE_SRCS = $(BPF_DIR)/sys_behavior.c $(BPF_DIR)/ssl_sniffer.c
 
 BPF_CLANG = clang
 BPF_FLAGS = -target bpf -D__TARGET_ARCH_x86 -I$(BPF_DIR) \
-            -I/mnt/e/os2026/libbpf/include \
-            -I/mnt/e/os2026/libbpf/src
-BPFTOOL = /mnt/e/os2026/bpftool/src/bpftool
-HIREDIS_ROOT ?= /mnt/e/os2026/hiredis
+            -I/home/gabriel/comp/project3136859-387615/libbpf/include \
+            -I/home/gabriel/comp/project3136859-387615/libbpf/src
+BPFTOOL = /home/gabriel/comp/project3136859-387615/bpftool/src/bpftool
+HIREDIS_ROOT ?= /home/gabriel/comp/project3136859-387615/hiredis
 LIBBPF_LIB_DIR ?= /usr/lib/x86_64-linux-gnu
 
 CC = gcc
 CFLAGS = -Wall -Wextra \
          -I$(BPF_DIR) \
-         -I/mnt/e/os2026/libbpf/include \
-         -I/mnt/e/os2026/libbpf/src \
-         -I/mnt/e/os2026/bpftool/src/libbpf/include \
+         -I/home/gabriel/comp/project3136859-387615/libbpf/include \
+         -I/home/gabriel/comp/project3136859-387615/libbpf/src \
+         -I/home/gabriel/comp/project3136859-387615/bpftool/src/libbpf/include \
          -I/mnt/e/os2026
 LDFLAGS = -L$(LIBBPF_LIB_DIR) -l:libbpf.so.1 -lelf -lz
 HIREDIS_LDFLAGS = $(HIREDIS_ROOT)/libhiredis.a

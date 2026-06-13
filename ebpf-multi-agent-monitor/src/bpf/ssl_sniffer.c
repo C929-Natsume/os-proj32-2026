@@ -215,7 +215,6 @@ void attach_probes_dynamically(struct ssl_sniffer_bpf *skel, int *pids, int coun
                         // 检查这个 libssl.so 是否已经被其他 Agent 挂载过了
                         if (!is_path_attached(lib_path)) {
                             printf("[*] [PID:%d] 发现新的 OpenSSL 动态库: %s\n", target_pid, lib_path);
-                            ATTACH_UPROBE(skel, lib_path, "SSL_write", probe_SSL_rw_enter, false);
                             // SSL_write + SSL_read 标准函数
                             ATTACH_UPROBE(skel, lib_path, "SSL_write", probe_SSL_rw_enter, false);
                             ATTACH_UPROBE(skel, lib_path, "SSL_write", probe_SSL_write_exit, true);
