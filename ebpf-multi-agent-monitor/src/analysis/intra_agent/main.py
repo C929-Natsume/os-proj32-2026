@@ -14,6 +14,12 @@ EVENT_UNLINK = 4
 EVENT_CONNECT = 5
 EVENT_SSL_READ = 6
 EVENT_SSL_WRITE = 7
+EVENT_CHMOD = 8
+EVENT_AGENT_COMM = 9
+EVENT_STDIO_READ = 10
+EVENT_STDIO_WRITE = 11
+EVENT_TCP_SEND = 12
+EVENT_TCP_RECV = 13
 
 
 class IntraAgentAnalyzer:
@@ -69,8 +75,12 @@ class IntraAgentAnalyzer:
             "fs_open_cnt": 0,
             "fs_unlink_cnt": 0,
             "net_connect_cnt": 0,
+            "net_tcp_send_cnt": 0,
+            "net_tcp_recv_cnt": 0,
             "ssl_read_cnt": 0,
             "ssl_write_cnt": 0,
+            "stdio_read_cnt": 0,
+            "stdio_write_cnt": 0,
             "unique_files": deque(maxlen=self.max_file_samples),
         }
 
@@ -85,8 +95,12 @@ class IntraAgentAnalyzer:
             s["fs_open_cnt"] = 0
             s["fs_unlink_cnt"] = 0
             s["net_connect_cnt"] = 0
+            s["net_tcp_send_cnt"] = 0
+            s["net_tcp_recv_cnt"] = 0
             s["ssl_read_cnt"] = 0
             s["ssl_write_cnt"] = 0
+            s["stdio_read_cnt"] = 0
+            s["stdio_write_cnt"] = 0
             s["unique_files"].clear()
         return s
 
@@ -133,8 +147,8 @@ class IntraAgentAnalyzer:
         }
 
     def _maybe_loop_req(self, event_data, s):
-        io_cnt = s["fs_open_cnt"] + s["fs_unlink_cnt"] + s["ssl_read_cnt"] + s["ssl_write_cnt"]
-        net_cnt = s["net_connect_cnt"] + s["ssl_read_cnt"] + s["ssl_write_cnt"]
+        io_cnt = s["fs_open_cnt"] + s["fs_unlink_cnt"] + s["stdio_read_cnt"] + s["stdio_write_cnt"]
+        net_cnt = s["net_connect_cnt"] + s["ssl_read_cnt"] + s["ssl_write_cnt"] + s["net_tcp_send_cnt"] + s["net_tcp_recv_cnt"]
         ts_ns = int(event_data.get("timestamp", 0))
         if io_cnt < 120 or net_cnt < 120:
             return None
@@ -248,6 +262,25 @@ class IntraAgentAnalyzer:
 
         elif event_type == EVENT_SSL_WRITE:
             s["ssl_write_cnt"] += 1
+
+        elif event_type == EVENT_CHMOD:
+            s["fs_open_cnt"] += 1
+            self._remember_file(s, path)
+
+        elif event_type == EVENT_AGENT_COMM:
+            s["net_connect_cnt"] += 1
+
+        elif event_type in (EVENT_STDIO_READ, EVENT_STDIO_WRITE):
+            if event_type == EVENT_STDIO_READ:
+                s["stdio_read_cnt"] += 1
+            else:
+                s["stdio_write_cnt"] += 1
+
+        elif event_type in (EVENT_TCP_SEND, EVENT_TCP_RECV):
+            if event_type == EVENT_TCP_SEND:
+                s["net_tcp_send_cnt"] += 1
+            else:
+                s["net_tcp_recv_cnt"] += 1
 
         loop_req = self._maybe_loop_req(event_data, s)
         if loop_req is not None:

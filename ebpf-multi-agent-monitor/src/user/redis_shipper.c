@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <bpf/bpf.h>
 #include <hiredis/hiredis.h>
@@ -58,9 +59,12 @@ struct agent_state {
     unsigned int pid;
     unsigned int main_pid;
     char agent_id[MAX_AGENT_ID_LEN];
+    char parent_agent_id[MAX_AGENT_ID_LEN];
     char comm[MAX_COMM_LEN];
     char workspace[MAX_WORKSPACE_LEN];
     struct agent_metrics metrics;
+    unsigned long long prev_cpu_ticks;
+    unsigned long long prev_cpu_sample_ns;
 };
 
 struct agent_agg {
@@ -87,6 +91,9 @@ static const char *g_agent_markers[] = {
 };
 
 static struct agent_state *get_or_create_ssl_fallback_agent(const struct probe_SSL_data_t *event);
+static unsigned long long read_process_cpu_ticks(__u32 pid);
+static __u64 get_process_rss_bytes(__u32 pid);
+static __u64 read_total_memory_bytes(void);
 
 static void finish_redis_command(const char *op_name, redisReply *reply)
 {
@@ -179,6 +186,10 @@ static void json_escape_bytes(const char *src, size_t src_len, char *dst, size_t
         }
         if (iscntrl(c)) {
             dst[di++] = ' ';
+            continue;
+        }
+        if (c > 127) {
+            dst[di++] = '.';
             continue;
         }
         dst[di++] = (char)c;
@@ -363,7 +374,13 @@ static const char *event_stream_type(unsigned int event_type)
     case EVENT_CONNECT:
     case EVENT_SSL_READ:
     case EVENT_SSL_WRITE:
+    case EVENT_AGENT_COMM:
+    case EVENT_TCP_SEND:
+    case EVENT_TCP_RECV:
         return "net";
+    case EVENT_STDIO_READ:
+    case EVENT_STDIO_WRITE:
+        return "proc";
     default:
         return "unknown";
     }
@@ -382,12 +399,22 @@ static const char *event_stream_subtype(unsigned int event_type)
         return "FS_UNLINK";
     case EVENT_CONNECT:
         return "NET_CONNECT";
+    case EVENT_AGENT_COMM:
+        return "AGENT_COMM";
     case EVENT_SSL_READ:
         return "NET_RECV";
     case EVENT_SSL_WRITE:
         return "NET_SEND";
     case EVENT_CHMOD:
         return "FS_CHMOD";
+    case EVENT_STDIO_READ:
+        return "STDIO_READ";
+    case EVENT_STDIO_WRITE:
+        return "STDIO_WRITE";
+    case EVENT_TCP_SEND:
+        return "TCP_SEND";
+    case EVENT_TCP_RECV:
+        return "TCP_RECV";
     default:
         return "UNKNOWN";
     }
@@ -406,12 +433,22 @@ static const char *get_behavior_name(uint32_t type)
         return "FILE_DELETE";
     case EVENT_CONNECT:
         return "NETWORK_CONNECT";
+    case EVENT_AGENT_COMM:
+        return "AGENT_COMMUNICATION";
     case EVENT_SSL_READ:
         return "SSL_RECEIVE_RESPONSE";
     case EVENT_SSL_WRITE:
         return "SSL_SEND_PROMPT";
     case EVENT_CHMOD:
         return "PERMISSION_CHANGE";
+    case EVENT_STDIO_READ:
+        return "STDIO_READ";
+    case EVENT_STDIO_WRITE:
+        return "STDIO_WRITE";
+    case EVENT_TCP_SEND:
+        return "TCP_PLAINTEXT_SEND";
+    case EVENT_TCP_RECV:
+        return "TCP_PLAINTEXT_RECV";
     default:
         return "UNKNOWN_BEHAVIOR";
     }
@@ -523,9 +560,10 @@ static void publish_agent_registration(struct agent_state *state)
     snprintf(key, sizeof(key), "inter:agent:%s", state->agent_id);
     reply = redisCommand(
         redis_ctx,
-        "HSET %s agent_id %s main_pid %u comm %s workspace %s status active group default",
+        "HSET %s agent_id %s parent_agent_id %s main_pid %u comm %s workspace %s status active group default",
         key,
         state->agent_id,
+        state->parent_agent_id,
         state->main_pid,
         state->comm,
         state->workspace
@@ -533,12 +571,44 @@ static void publish_agent_registration(struct agent_state *state)
     finish_redis_command("redisCommand", reply);
 }
 
+// 发布智能体间通信边到 Redis (agent→agent 网络连接)
+static void publish_agent_comm_edge(const char *src_agent_id, const char *dst_agent_id,
+                                     const char *dip, int dport, unsigned long long ts_ns)
+{
+    redisReply *reply;
+    char edge_component[MAX_COMPONENT_LEN];
+
+    if (!redis_ctx || !src_agent_id || !dst_agent_id) {
+        return;
+    }
+
+    snprintf(edge_component, sizeof(edge_component), "%s", dst_agent_id);
+    reply = redisCommand(redis_ctx, "SADD inter:edges %s:%s", src_agent_id, edge_component);
+    finish_redis_command("redisCommand", reply);
+
+    reply = redisCommand(
+        redis_ctx,
+        "HSET inter:edge:%s:%s src %s dst %s type agent_comm weight 1 "
+        "protocol tcp daddr %s dport %d last_seen_ns %llu",
+        src_agent_id,
+        edge_component,
+        src_agent_id,
+        edge_component,
+        dip,
+        dport,
+        ts_ns
+    );
+    finish_redis_command("redisCommand", reply);
+}
+
 static struct agent_state *get_or_create_agent(unsigned int pid, unsigned int ppid,
-                                               const char *comm, unsigned long long ts_ns)
+                                               const char *comm, unsigned long long ts_ns,
+                                               __u32 parent_agent_id, const char *parent_agent_name)
 {
     struct agent_state *state = find_agent_by_pid(pid);
     struct agent_state *parent_state = NULL;
     char detected_comm[MAX_COMM_LEN];
+    (void)parent_agent_name;
 
     if (state) {
         if (ts_ns > state->metrics.last_active_ns) {
@@ -561,11 +631,18 @@ static struct agent_state *get_or_create_agent(unsigned int pid, unsigned int pp
     state->metrics.window_start_ns = ts_ns;
     state->metrics.last_active_ns = ts_ns;
 
+    if (parent_agent_id != 0) {
+        snprintf(state->parent_agent_id, sizeof(state->parent_agent_id), "agent_%u", parent_agent_id);
+    }
+
     if (parent_state) {
         state->main_pid = parent_state->main_pid;
         strncpy(state->agent_id, parent_state->agent_id, sizeof(state->agent_id) - 1);
         strncpy(state->workspace, parent_state->workspace, sizeof(state->workspace) - 1);
         strncpy(state->comm, comm && comm[0] ? comm : parent_state->comm, sizeof(state->comm) - 1);
+        if (parent_agent_id == 0 && parent_state->parent_agent_id[0]) {
+            strncpy(state->parent_agent_id, parent_state->parent_agent_id, sizeof(state->parent_agent_id) - 1);
+        }
         return state;
     }
 
@@ -628,6 +705,61 @@ static struct agent_state *get_or_create_ssl_fallback_agent(const struct probe_S
     return state;
 }
 
+static void sample_agent_cpu_usage(struct agent_state *state, unsigned long long now_ns)
+{
+    unsigned long long ticks;
+    unsigned long long delta_ticks;
+    unsigned long long delta_ns;
+    long clk_tck;
+
+    ticks = read_process_cpu_ticks(state->main_pid);
+    if (ticks == 0) {
+        return;
+    }
+
+    if (state->prev_cpu_sample_ns == 0 || state->prev_cpu_ticks == 0) {
+        state->prev_cpu_ticks = ticks;
+        state->prev_cpu_sample_ns = now_ns;
+        return;
+    }
+
+    if (now_ns <= state->prev_cpu_sample_ns) {
+        state->prev_cpu_ticks = ticks;
+        state->prev_cpu_sample_ns = now_ns;
+        return;
+    }
+
+    delta_ticks = ticks - state->prev_cpu_ticks;
+    delta_ns = now_ns - state->prev_cpu_sample_ns;
+
+    clk_tck = sysconf(_SC_CLK_TCK);
+    if (clk_tck <= 0) clk_tck = 100;
+
+    {
+        unsigned long long max_ticks = (unsigned long long)((double)clk_tck * ((double)delta_ns / 1e9));
+        if (delta_ticks > max_ticks) {
+            delta_ticks = max_ticks;
+        }
+    }
+
+    {
+        long num_cpus = sysconf(_SC_NPROCESSORS_ONLN);
+        if (num_cpus <= 0) num_cpus = 1;
+        state->metrics.cpu_usage = (double)delta_ticks / (double)clk_tck / ((double)delta_ns / 1e9) / (double)num_cpus;
+    }
+
+    state->prev_cpu_ticks = ticks;
+    state->prev_cpu_sample_ns = now_ns;
+}
+
+static void sample_agent_memory_usage(struct agent_state *state)
+{
+    __u64 rss = get_process_rss_bytes(state->main_pid);
+    __u64 total = read_total_memory_bytes();
+    if (total == 0) return;
+    state->metrics.memory_usage = (double)rss / (double)total;
+}
+
 static void publish_metrics_if_needed(struct agent_state *state, unsigned long long ts_ns)
 {
     redisReply *reply;
@@ -639,12 +771,16 @@ static void publish_metrics_if_needed(struct agent_state *state, unsigned long l
     if (state->metrics.window_start_ns == 0) {
         state->metrics.window_start_ns = ts_ns;
         state->metrics.last_active_ns = ts_ns;
+        sample_agent_cpu_usage(state, ts_ns);
         return;
     }
     if (ts_ns - state->metrics.window_start_ns < METRIC_WINDOW_NS) {
         state->metrics.last_active_ns = ts_ns;
         return;
     }
+
+    sample_agent_cpu_usage(state, ts_ns);
+    sample_agent_memory_usage(state);
 
     snprintf(key, sizeof(key), "inter:metric:%s", state->agent_id);
     reply = redisCommand(
@@ -716,7 +852,20 @@ static void update_metrics_for_sys_event(struct agent_state *state, const struct
             state->metrics.workspace_violation++;
         }
         break;
+    case EVENT_CHMOD:
+        remember_unique_file(&state->metrics, path);
+        if (path_is_sensitive(path)) {
+            state->metrics.sensitive_file_count++;
+        }
+        if (path_is_workspace_violation(path)) {
+            state->metrics.workspace_violation++;
+        }
+        break;
     case EVENT_CONNECT:
+        state->metrics.net_connect_count++;
+        state->metrics.api_call_count++;
+        break;
+    case EVENT_AGENT_COMM:
         state->metrics.net_connect_count++;
         state->metrics.api_call_count++;
         break;
@@ -732,11 +881,9 @@ static void update_metrics_for_ssl_event(struct agent_state *state, unsigned int
         return;
     }
     if (event_type == EVENT_SSL_READ) {
-        state->metrics.fs_read_count++;
         state->metrics.net_recv_count++;
         state->metrics.msg_recv_count++;
     } else if (event_type == EVENT_SSL_WRITE) {
-        state->metrics.fs_write_count++;
         state->metrics.net_send_count++;
         state->metrics.msg_sent_count++;
     }
@@ -749,7 +896,7 @@ static void publish_inter_event(struct agent_state *state, const struct sys_even
 {
     redisReply *reply;
     char comm[MAX_COMM_LEN * 2];
-    char filename[MAX_PATH_LEN * 2];
+    char filename[MAX_PATH_LEN * 2 + 1];
     char dip[64];
     const char *event_type = event_stream_type(event->event_type);
     const char *subtype = event_stream_subtype(event->event_type);
@@ -768,24 +915,48 @@ static void publish_inter_event(struct agent_state *state, const struct sys_even
     case EVENT_CHMOD:
         reply = redisCommand(
             redis_ctx,
-            "XADD inter:events * event_type %s subtype %s timestamp_ns %llu pid %u tid %u comm %s filename %s parent_pid %u agent_id %s",
-            event_type, subtype, event->timestamp, event->pid, event->pid, comm, filename, event->child_pid, state->agent_id
+            "XADD inter:events * event_type %s subtype %s timestamp_ns %llu pid %u tid %u comm %s filename %s parent_pid %u agent_id %s parent_agent_id %u parent_agent_name %s",
+            event_type, subtype, event->timestamp, event->pid, event->pid, comm, filename, event->child_pid, state->agent_id,
+            event->parent_agent_id, event->parent_agent_name
         );
         break;
     case EVENT_FORK:
         reply = redisCommand(
             redis_ctx,
-            "XADD inter:events * event_type %s subtype %s timestamp_ns %llu pid %u tid %u comm %s parent_pid %u child_pid %u agent_id %s",
-            event_type, subtype, event->timestamp, event->pid, event->pid, comm, event->pid, event->child_pid, state->agent_id
+            "XADD inter:events * event_type %s subtype %s timestamp_ns %llu pid %u tid %u comm %s parent_pid %u child_pid %u agent_id %s parent_agent_id %u parent_agent_name %s",
+            event_type, subtype, event->timestamp, event->pid, event->pid, comm, event->pid, event->child_pid, state->agent_id,
+            event->parent_agent_id, event->parent_agent_name
         );
         break;
     case EVENT_CONNECT:
         format_ipv4(event->connect.dip, dip, sizeof(dip));
         reply = redisCommand(
             redis_ctx,
-            "XADD inter:events * event_type %s subtype %s timestamp_ns %llu pid %u tid %u comm %s family %d daddr %s dport %d agent_id %s",
-            event_type, subtype, event->timestamp, event->pid, event->pid, comm, event->connect.family, dip, event->connect.dport, state->agent_id
+            "XADD inter:events * event_type %s subtype %s timestamp_ns %llu pid %u tid %u comm %s family %d daddr %s dport %d agent_id %s parent_agent_id %u parent_agent_name %s",
+            event_type, subtype, event->timestamp, event->pid, event->pid, comm, event->connect.family, dip, event->connect.dport, state->agent_id,
+            event->parent_agent_id, event->parent_agent_name
         );
+        break;
+    case EVENT_AGENT_COMM:
+        format_ipv4(event->connect.dip, dip, sizeof(dip));
+        {
+            char peer_agent_str[MAX_AGENT_ID_LEN];
+            snprintf(peer_agent_str, sizeof(peer_agent_str), "agent_%u",
+                     event->peer_agent_id ? (event->peer_agent_id & 0x7FFFFFFF) : event->peer_pid);
+            reply = redisCommand(
+                redis_ctx,
+                "XADD inter:events * event_type %s subtype %s timestamp_ns %llu pid %u tid %u comm %s "
+                "family %d daddr %s dport %d agent_id %s "
+                "parent_agent_id %u parent_agent_name %s "
+                "peer_agent_id %u peer_pid %u peer_agent %s",
+                event_type, subtype, event->timestamp, event->pid, event->pid, comm,
+                event->connect.family, dip, event->connect.dport, state->agent_id,
+                event->parent_agent_id, event->parent_agent_name,
+                event->peer_agent_id, event->peer_pid, peer_agent_str
+            );
+            publish_agent_comm_edge(state->agent_id, peer_agent_str,
+                                    dip, event->connect.dport, event->timestamp);
+        }
         break;
     default:
         return;
@@ -799,10 +970,15 @@ static void publish_behavior_event(const struct sys_event *event)
     char value[2048];
     const char *behavior_name = get_behavior_name(event->event_type);
     redisReply *reply;
+    char escaped_agent_name[MAX_AGENT_NAME_LEN * 2 + 1];
+    char escaped_comm[MAX_COMM_LEN * 2 + 1];
 
     if (!redis_ctx) {
         return;
     }
+
+    json_escape(event->agent_name, escaped_agent_name, sizeof(escaped_agent_name));
+    json_escape(event->comm, escaped_comm, sizeof(escaped_comm));
 
     if (event->event_type == EVENT_CONNECT) {
         char dip[64];
@@ -811,33 +987,37 @@ static void publish_behavior_event(const struct sys_event *event)
             value,
             sizeof(value),
             "{\"agent_name\":\"%s\",\"agent_no\":%u,\"behavior_name\":\"%s\",\"behavior_no\":%u,\"timestamp\":%llu,"
-            "\"operation\":{\"pid\":%u,\"child_pid\":%u,\"comm\":\"%s\",\"dip\":\"%s\",\"dport\":%d}}",
-            event->agent_name,
+            "\"operation\":{\"pid\":%u,\"child_pid\":%u,\"comm\":\"%s\",\"dip\":\"%s\",\"dport\":%d},\"parent_agent_id\":%u}",
+            escaped_agent_name,
             event->agent_id,
             behavior_name,
             event->event_type,
             event->timestamp,
             event->pid,
             event->child_pid,
-            event->comm,
+            escaped_comm,
             dip,
-            event->connect.dport
+            event->connect.dport,
+            event->parent_agent_id
         );
     } else {
+        char escaped_filename[MAX_PATH_LEN * 2 + 1];
+        json_escape(event->filename, escaped_filename, sizeof(escaped_filename));
         snprintf(
             value,
             sizeof(value),
             "{\"agent_name\":\"%s\",\"agent_no\":%u,\"behavior_name\":\"%s\",\"behavior_no\":%u,\"timestamp\":%llu,"
-            "\"operation\":{\"pid\":%u,\"child_pid\":%u,\"comm\":\"%s\",\"target_file\":\"%s\"}}",
-            event->agent_name,
+            "\"operation\":{\"pid\":%u,\"child_pid\":%u,\"comm\":\"%s\",\"target_file\":\"%s\"},\"parent_agent_id\":%u}",
+            escaped_agent_name,
             event->agent_id,
             behavior_name,
             event->event_type,
             event->timestamp,
             event->pid,
             event->child_pid,
-            event->comm,
-            event->filename
+            escaped_comm,
+            escaped_filename,
+            event->parent_agent_id
         );
     }
 
@@ -894,14 +1074,29 @@ static void publish_message_event(struct agent_state *state, const char *protoco
 
     reply = redisCommand(
         redis_ctx,
-        "HSET inter:edge:%s:%s src %s dst %s type message weight 1 total_messages %u total_bytes %u last_seen_ns %llu",
+        "HSET inter:edge:%s:%s src %s dst %s type message weight 1 last_seen_ns %llu",
         state->agent_id,
         dst_component,
         state->agent_id,
         dst_component,
-        1U,
-        bytes,
         ts_ns
+    );
+    finish_redis_command("redisCommand", reply);
+
+    reply = redisCommand(
+        redis_ctx,
+        "HINCRBY inter:edge:%s:%s total_messages 1",
+        state->agent_id,
+        dst_component
+    );
+    finish_redis_command("redisCommand", reply);
+
+    reply = redisCommand(
+        redis_ctx,
+        "HINCRBY inter:edge:%s:%s total_bytes %u",
+        state->agent_id,
+        dst_component,
+        bytes
     );
     finish_redis_command("redisCommand", reply);
 }
@@ -936,15 +1131,16 @@ int ship_sys_event(struct sys_event *event)
 {
     redisReply *reply;
     char value[2048];
-    char escaped_filename[MAX_PATH_LEN * 2];
-    char escaped_dip[64];
+    char escaped_filename[MAX_PATH_LEN * 2 + 1];
+    char escaped_comm[MAX_COMM_LEN * 2 + 1];
     struct agent_state *state;
 
     if (!redis_ctx || !event) {
         return -1;
     }
 
-    state = get_or_create_agent(event->pid, event->child_pid, event->comm, event->timestamp);
+    state = get_or_create_agent(event->pid, event->child_pid, event->comm, event->timestamp,
+                                 event->parent_agent_id, event->parent_agent_name);
     if (state) {
         update_metrics_for_sys_event(state, event);
         publish_metrics_if_needed(state, event->timestamp);
@@ -953,37 +1149,46 @@ int ship_sys_event(struct sys_event *event)
 
     publish_behavior_event(event);
 
-    if (event->event_type == EVENT_CONNECT) {
-        format_ipv4(event->connect.dip, escaped_dip, sizeof(escaped_dip));
+    json_escape(event->comm, escaped_comm, sizeof(escaped_comm));
+
+    if (event->event_type == EVENT_CONNECT || event->event_type == EVENT_AGENT_COMM) {
+        char dip[64];
+        format_ipv4(event->connect.dip, dip, sizeof(dip));
         snprintf(
             value,
             sizeof(value),
-            "{\"type\":%u,\"pid\":%u,\"ppid\":%u,\"uid\":%u,\"timestamp\":%llu,\"comm\":\"%s\",\"dip\":\"%s\",\"dport\":%d,\"agent_id\":\"%s\",\"main_pid\":%u}",
+            "{\"type\":%u,\"pid\":%u,\"ppid\":%u,\"uid\":%u,\"timestamp\":%llu,\"comm\":\"%s\",\"dip\":\"%s\",\"dport\":%d,\"agent_id\":\"%s\",\"parent_agent_id\":%u,\"parent_agent_name\":\"%s\",\"main_pid\":%u,\"peer_agent_id\":%u,\"peer_pid\":%u}",
             event->event_type,
             event->pid,
             event->child_pid,
             event->uid,
             event->timestamp,
-            event->comm,
-            escaped_dip,
+            escaped_comm,
+            dip,
             event->connect.dport,
             state ? state->agent_id : "",
-            state ? state->main_pid : event->pid
+            event->parent_agent_id,
+            event->parent_agent_name,
+            state ? state->main_pid : event->pid,
+            event->peer_agent_id,
+            event->peer_pid
         );
     } else {
         json_escape(event->filename, escaped_filename, sizeof(escaped_filename));
         snprintf(
             value,
             sizeof(value),
-            "{\"type\":%u,\"pid\":%u,\"ppid\":%u,\"uid\":%u,\"timestamp\":%llu,\"comm\":\"%s\",\"filename\":\"%s\",\"agent_id\":\"%s\",\"main_pid\":%u}",
+            "{\"type\":%u,\"pid\":%u,\"ppid\":%u,\"uid\":%u,\"timestamp\":%llu,\"comm\":\"%s\",\"filename\":\"%s\",\"agent_id\":\"%s\",\"parent_agent_id\":%u,\"parent_agent_name\":\"%s\",\"main_pid\":%u}",
             event->event_type,
             event->pid,
             event->child_pid,
             event->uid,
             event->timestamp,
-            event->comm,
+            escaped_comm,
             escaped_filename,
             state ? state->agent_id : "",
+            event->parent_agent_id,
+            event->parent_agent_name,
             state ? state->main_pid : event->pid
         );
     }
@@ -1020,48 +1225,52 @@ int ship_ssl_event(struct probe_SSL_data_t *event)
     }
     base64_encode((const unsigned char *)event->buf, event->buf_size, b64_data);
 
-    json_buffer_size = b64_len + 1024;
-    value = malloc(json_buffer_size);
-    if (!value) {
-        free(b64_data);
-        return -1;
-    }
+    {
+        char escaped_agent_name[MAX_AGENT_NAME_LEN * 2 + 1];
+        char escaped_comm[MAX_COMM_LEN * 2 + 1];
+        json_escape(event->agent_name, escaped_agent_name, sizeof(escaped_agent_name));
+        json_escape(event->comm, escaped_comm, sizeof(escaped_comm));
 
-    snprintf(
-        value,
-        json_buffer_size,
-        "{\"agent_name\":\"%s\",\"agent_no\":%u,\"behavior_name\":\"%s\",\"behavior_no\":%u,\"timestamp\":%llu,"
-        "\"operation\":{\"pid\":%u,\"tid\":%u,\"comm\":\"%s\",\"payload_bytes\":%u},\"network_payload\":\"%s\"}",
-        event->agent_name,
-        event->agent_id,
-        behavior_name,
-        mapped_event_type,
-        event->timestamp_ns,
-        event->pid,
-        event->tid,
-        event->comm,
-        event->buf_size,
-        b64_data
-    );
+        json_buffer_size = b64_len + 1024;
+        value = malloc(json_buffer_size);
+        if (!value) {
+            free(b64_data);
+            return -1;
+        }
+
+        snprintf(
+            value,
+            json_buffer_size,
+            "{\"agent_name\":\"%s\",\"agent_no\":%u,\"behavior_name\":\"%s\",\"behavior_no\":%u,\"timestamp\":%llu,"
+            "\"operation\":{\"pid\":%u,\"tid\":%u,\"comm\":\"%s\",\"payload_bytes\":%u},\"network_payload\":\"%s\"}",
+            escaped_agent_name,
+            event->agent_id,
+            behavior_name,
+            mapped_event_type,
+            event->timestamp_ns,
+            event->pid,
+            event->tid,
+            escaped_comm,
+            event->buf_size,
+            b64_data
+        );
+    }
 
     reply = redisCommand(redis_ctx, "PUBLISH %s %s", REDIS_CHANNEL_BEHAVIOR, value);
     finish_redis_command("redisCommand", reply);
 
-    state = get_or_create_agent(event->pid, event->pid, event->comm, event->timestamp_ns);
+        state = get_or_create_agent(event->pid, event->pid, event->comm, event->timestamp_ns, 0, "");
     if (!state) {
         state = get_or_create_ssl_fallback_agent(event);
     }
     if (state) {
-        char escaped_payload[MAX_STREAM_DATA];
         update_metrics_for_ssl_event(state, mapped_event_type, (const char *)event->buf, event->buf_size);
         publish_metrics_if_needed(state, event->timestamp_ns);
-        json_escape_bytes((const char *)event->buf, bounded_strnlen_local((const char *)event->buf, MAX_STREAM_DATA - 1),
-                          escaped_payload, sizeof(escaped_payload));
         publish_message_event(
             state,
             "ssl",
             mapped_event_type == EVENT_SSL_WRITE ? "prompt" : "response",
-            escaped_payload,
+            b64_data,
             event->buf_size,
             event->timestamp_ns,
             event->pid,
@@ -1070,32 +1279,238 @@ int ship_ssl_event(struct probe_SSL_data_t *event)
     }
 
     if (state) {
-        char escaped_payload[MAX_STREAM_DATA];
-        char msg_value[2048];
+        char *ssl_msg_value;
+        size_t ssl_msg_size;
+        char escaped_comm2[MAX_COMM_LEN * 2 + 1];
 
-        json_escape_bytes((const char *)event->buf, bounded_strnlen_local((const char *)event->buf, MAX_STREAM_DATA - 1),
-                          escaped_payload, sizeof(escaped_payload));
-        snprintf(
-            msg_value,
-            sizeof(msg_value),
-            "{\"type\":%u,\"pid\":%u,\"ppid\":%u,\"timestamp\":%llu,\"comm\":\"%s\",\"data_len\":%u,\"data\":\"%s\",\"agent_id\":\"%s\",\"main_pid\":%u}",
-            mapped_event_type,
-            event->pid,
-            event->pid,
-            event->timestamp_ns,
-            event->comm,
-            event->buf_size,
-            escaped_payload,
-            state->agent_id,
-            state->main_pid
-        );
-        reply = redisCommand(redis_ctx, "PUBLISH %s %s", REDIS_CHANNEL, msg_value);
-        finish_redis_command("redisCommand", reply);
+        json_escape(event->comm, escaped_comm2, sizeof(escaped_comm2));
+        ssl_msg_size = b64_len + 2048;
+        ssl_msg_value = malloc(ssl_msg_size);
+        if (ssl_msg_value) {
+            snprintf(
+                ssl_msg_value,
+                ssl_msg_size,
+                "{\"type\":%u,\"pid\":%u,\"ppid\":%u,\"timestamp\":%llu,\"comm\":\"%s\",\"data_len\":%u,\"data\":\"%s\",\"agent_id\":\"%s\",\"main_pid\":%u}",
+                mapped_event_type,
+                event->pid,
+                event->pid,
+                event->timestamp_ns,
+                escaped_comm2,
+                event->buf_size,
+                b64_data,
+                state->agent_id,
+                state->main_pid
+            );
+            reply = redisCommand(redis_ctx, "PUBLISH %s %s", REDIS_CHANNEL, ssl_msg_value);
+            finish_redis_command("redisCommand", reply);
+            free(ssl_msg_value);
+        }
     }
 
     free(value);
     free(b64_data);
     return 0;
+}
+
+int ship_raw_event(struct raw_data_event *event)
+{
+    redisReply *reply;
+    char *b64_data;
+    char *value;
+    size_t b64_len;
+    size_t json_buffer_size;
+    uint32_t mapped_event_type;
+    const char *behavior_name;
+    struct agent_state *state;
+    char escaped_payload[MAX_STREAM_DATA];
+    char msg_value[2048];
+    char escaped_agent_name[MAX_AGENT_NAME_LEN * 2 + 1];
+    char escaped_comm[MAX_COMM_LEN * 2 + 1];
+
+    if (!redis_ctx || !event) {
+        return -1;
+    }
+
+    if (event->source == RAW_SRC_STDIO) {
+        mapped_event_type = (event->direction == 0) ? EVENT_STDIO_READ : EVENT_STDIO_WRITE;
+    } else {
+        mapped_event_type = (event->direction == 0) ? EVENT_TCP_RECV : EVENT_TCP_SEND;
+    }
+
+    behavior_name = get_behavior_name(mapped_event_type);
+
+    json_escape(event->agent_name, escaped_agent_name, sizeof(escaped_agent_name));
+    json_escape(event->comm, escaped_comm, sizeof(escaped_comm));
+
+    snprintf(
+        msg_value,
+        sizeof(msg_value),
+        "{\"agent_name\":\"%s\",\"agent_no\":%u,\"behavior_name\":\"%s\",\"behavior_no\":%u,\"timestamp\":%llu,"
+        "\"operation\":{\"pid\":%u,\"tid\":%u,\"comm\":\"%s\",\"fd\":%u,\"data_len\":%u,\"source\":\"%s\","
+        "\"peer_pid\":%u,\"direction\":%d},\"parent_agent_id\":%u}",
+        escaped_agent_name,
+        event->agent_id,
+        behavior_name,
+        mapped_event_type,
+        event->timestamp_ns,
+        event->pid,
+        event->tid,
+        escaped_comm,
+        event->fd,
+        event->data_len,
+        (event->source == RAW_SRC_STDIO) ? "stdio" : "tcp",
+        event->peer_pid,
+        event->direction,
+        event->parent_agent_id
+    );
+    reply = redisCommand(redis_ctx, "PUBLISH %s %s", REDIS_CHANNEL_BEHAVIOR, msg_value);
+    finish_redis_command("redisCommand", reply);
+
+    if (event->buf_filled && event->buf_size > 0) {
+        b64_len = 4 * ((event->buf_size + 2) / 3) + 1;
+        b64_data = malloc(b64_len);
+        if (!b64_data) return -1;
+        base64_encode(event->buf, event->buf_size, b64_data);
+
+        json_buffer_size = b64_len + 1024;
+        value = malloc(json_buffer_size);
+        if (!value) {
+            free(b64_data);
+            return -1;
+        }
+
+        snprintf(
+            value,
+            json_buffer_size,
+            "{\"type\":%u,\"pid\":%u,\"tid\":%u,\"timestamp\":%llu,\"comm\":\"%s\","
+            "\"data_len\":%u,\"fd\":%u,\"source\":%u,\"direction\":%d,"
+            "\"agent_id\":%u,\"agent_name\":\"%s\",\"parent_agent_id\":%u,\"parent_agent_name\":\"%s\",\"peer_pid\":%u,\"data\":\"%s\"}",
+            mapped_event_type,
+            event->pid,
+            event->tid,
+            event->timestamp_ns,
+            escaped_comm,
+            event->data_len,
+            event->fd,
+            event->source,
+            event->direction,
+            event->agent_id,
+            escaped_agent_name,
+            event->parent_agent_id,
+            event->parent_agent_name,
+            event->peer_pid,
+            b64_data
+        );
+
+        reply = redisCommand(redis_ctx, "PUBLISH %s %s", REDIS_CHANNEL, value);
+        finish_redis_command("redisCommand", reply);
+        free(value);
+        free(b64_data);
+
+        state = get_or_create_agent(event->pid, event->pid, event->comm, event->timestamp_ns,
+                                     event->parent_agent_id, (const char *)event->parent_agent_name);
+        if (!state) {
+            state = allocate_agent_slot();
+            if (state) {
+                state->in_use = 1;
+                state->pid = event->pid;
+                state->main_pid = event->pid;
+                state->metrics.window_start_ns = event->timestamp_ns;
+                state->metrics.last_active_ns = event->timestamp_ns;
+                snprintf(state->agent_id, sizeof(state->agent_id), "agent_%u", event->pid);
+                strncpy(state->workspace, workspace_root(), sizeof(state->workspace) - 1);
+                strncpy(state->comm, event->comm && event->comm[0] ? event->comm : "raw_proto", sizeof(state->comm) - 1);
+                publish_agent_registration(state);
+            }
+        }
+
+        if (state) {
+            if (event->direction == 0) {
+                state->metrics.msg_recv_count++;
+                state->metrics.net_recv_count++;
+            } else {
+                state->metrics.msg_sent_count++;
+                state->metrics.net_send_count++;
+            }
+            state->metrics.api_call_count++;
+            publish_metrics_if_needed(state, event->timestamp_ns);
+
+            json_escape_bytes((const char *)event->buf,
+                bounded_strnlen_local((const char *)event->buf, MAX_STREAM_DATA - 1),
+                escaped_payload, sizeof(escaped_payload));
+
+            const char *protocol = (event->source == RAW_SRC_STDIO) ? "stdio" : "tcp";
+            const char *msg_type = (event->direction == 0) ? "recv" : "send";
+
+            publish_message_event(
+                state,
+                protocol,
+                msg_type,
+                escaped_payload,
+                event->buf_size,
+                event->timestamp_ns,
+                event->pid,
+                event->tid
+            );
+        }
+    }
+
+    return 0;
+}
+
+static unsigned long long read_process_cpu_ticks(__u32 pid)
+{
+    char path[256];
+    char buf[4096];
+    char *p, *saveptr, *token;
+    FILE *f;
+    int i;
+    unsigned long long utime = 0, stime = 0;
+
+    snprintf(path, sizeof(path), "/proc/%u/stat", pid);
+    f = fopen(path, "r");
+    if (!f) return 0;
+    if (!fgets(buf, sizeof(buf), f)) {
+        fclose(f);
+        return 0;
+    }
+    fclose(f);
+
+    p = strrchr(buf, ')');
+    if (!p) return 0;
+    p += 2;
+
+    for (i = 0; i < 12; i++) {
+        token = strtok_r(i == 0 ? p : NULL, " ", &saveptr);
+        if (!token) return 0;
+        if (i == 11) utime = strtoull(token, NULL, 10);
+    }
+    token = strtok_r(NULL, " ", &saveptr);
+    if (!token) return 0;
+    stime = strtoull(token, NULL, 10);
+
+    return utime + stime;
+}
+
+static __u64 read_total_memory_bytes(void)
+{
+    static __u64 cached = 0;
+    FILE *f;
+    char buf[256];
+
+    if (cached != 0) return cached;
+
+    f = fopen("/proc/meminfo", "r");
+    if (!f) return 0;
+    while (fgets(buf, sizeof(buf), f)) {
+        unsigned long long kb;
+        if (sscanf(buf, "MemTotal: %llu kB", &kb) == 1) {
+            cached = kb * 1024;
+            break;
+        }
+    }
+    fclose(f);
+    return cached;
 }
 
 static __u64 get_process_rss_bytes(__u32 pid)

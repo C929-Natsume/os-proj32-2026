@@ -39,7 +39,47 @@ enum event_type {
     EVENT_CONNECT,
     EVENT_SSL_READ,
     EVENT_SSL_WRITE,
-    EVENT_CHMOD
+    EVENT_CHMOD,
+    EVENT_AGENT_COMM,        // 智能体间通信事件
+    EVENT_STDIO_READ = 10,   // MCP stdio 读取 (stdin)
+    EVENT_STDIO_WRITE,       // MCP stdio 写入 (stdout/stderr)
+    EVENT_TCP_SEND,          // 纯文本 TCP 发送 (localhost HTTP/A2A/ACP/ANP)
+    EVENT_TCP_RECV,          // 纯文本 TCP 接收
+};
+
+// 监听端口-智能体映射
+struct tcp_listen_key {
+    __u32 saddr;   // IPv4 地址
+    __u16 sport;   // 端口
+    __u16 pad;
+};
+
+// 捕获 MCP stdio、A2A/ACP/ANP localhost HTTP 通信
+#define RAW_DATA_BUF_SIZE  16384  // 单次截获最大 16KB
+#define RAW_TASK_COMM_LEN  16
+
+enum raw_data_source {
+    RAW_SRC_STDIO = 1,   // stdin/stdout 捕获
+    RAW_SRC_TCP   = 2,   // 纯文本 TCP 捕获
+};
+
+struct raw_data_event {
+    __u64 timestamp_ns;
+    __u32 pid;
+    __u32 tid;
+    __u32 agent_id;
+    char agent_name[MAX_AGENT_NAME_LEN];
+    __u32 parent_agent_id;
+    char parent_agent_name[MAX_AGENT_NAME_LEN];
+    __u32 data_len;              // 原始数据长度
+    __u32 buf_size;              // 实际拷贝到 eBPF 的长度
+    int buf_filled;              // 是否成功拷贝数据
+    int direction;               // 0=READ/RECV, 1=WRITE/SEND
+    enum raw_data_source source; // 数据来源
+    __u32 fd;                    // 文件描述符
+    __u32 peer_pid;              // stdio: 对端 PID (父/子进程)
+    char comm[RAW_TASK_COMM_LEN];
+    __u8 buf[RAW_DATA_BUF_SIZE];
 };
 
 // 新增：进程上下文结构体，用于在 eBPF Map 中记录进程的血缘和智能体归属
@@ -47,8 +87,17 @@ struct process_context {
     __u32 agent_id;                           // 智能体编号
     char agent_name[MAX_AGENT_NAME_LEN];      // 智能体名称
     __u32 parent_pid;                         // 父进程 PID
-    __u8 is_sub_agent;                        // 身份标识：1=母/子智能体，0=普通系统工具
+    __u32 parent_agent_id;                    // 调用方智能体编号（父智能体身份）
+    char parent_agent_name[MAX_AGENT_NAME_LEN]; // 调用方智能体名称
+    __u8 is_sub_agent;                        // 身份标识：2=候选子智能体, 1=已确认子智能体, 0=普通系统工具
     __u8 depth;                               // 调用树深度
+};
+
+// fd-对端身份映射
+struct fd_peer_info {
+    __u32 peer_pid;
+    __u32 peer_agent_id;
+    char peer_agent_name[MAX_AGENT_NAME_LEN];
 };
 
 #include "sys_behavior.h"

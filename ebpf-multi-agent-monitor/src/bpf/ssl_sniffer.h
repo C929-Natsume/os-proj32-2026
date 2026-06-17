@@ -1,8 +1,8 @@
 #ifndef __SSL_SNIFFER_H
 #define __SSL_SNIFFER_H
 
-#define MAX_BUF_SIZE 16384 // 单次截获最大 16KB 
-#define RING_BUFFER_SIZE (2 * 1024 * 1024) // 2MB 环形缓冲区
+#define MAX_BUF_SIZE 65536 // 单次截获最大 64KB 
+#define RING_BUFFER_SIZE (4 * 1024 * 1024) // 4MB 环形缓冲区
 #define TASK_COMM_LEN 16
 
 // 区分来源引擎，便于用户态解析

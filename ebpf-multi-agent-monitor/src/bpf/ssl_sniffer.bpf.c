@@ -96,9 +96,15 @@ static __always_inline int process_data_exit(void *buf, int len, int rw, bool is
     data->engine = engine;
     bpf_get_current_comm(&data->comm, sizeof(data->comm));
 
-    if (buf && len > 0) {
-        // eBPF Verifier 要求绝对安全的内存边界。
-        // 用 0xFFFFF 掩码将长度钳制在 1MB 内，再与 MAX_BUF_SIZE 比对，100% 通过编译审查。
+    // 使用字节比对
+    bool skip_payload = false;
+    if (data->comm[0] == 'g' && data->comm[1] == 'i' && data->comm[2] == 't' && data->comm[3] == '\0') {
+        skip_payload = true;
+    } else if (data->comm[0] == 's' && data->comm[1] == 's' && data->comm[2] == 'h') {
+        skip_payload = true;
+    }
+
+    if (buf && len > 0 && !skip_payload) {
         u32 copy_size = (u32)len & 0xFFFFF; 
         if (copy_size > MAX_BUF_SIZE) copy_size = MAX_BUF_SIZE;
         

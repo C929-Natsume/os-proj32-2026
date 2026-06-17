@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <deque>
 #include <unordered_map>
 #include <chrono>
 #include <ctime>
@@ -15,7 +16,9 @@ using json = nlohmann::json;
 
 enum EventType {
     EVENT_EXECVE = 1, EVENT_FORK = 2, EVENT_OPEN = 3, EVENT_UNLINK = 4,
-    EVENT_CONNECT = 5, EVENT_SSL_READ = 6, EVENT_SSL_WRITE = 7
+    EVENT_CONNECT = 5, EVENT_SSL_READ = 6, EVENT_SSL_WRITE = 7,
+    EVENT_AGENT_COMM = 9, EVENT_STDIO_READ = 10, EVENT_STDIO_WRITE = 11,
+    EVENT_TCP_SEND = 12, EVENT_TCP_RECV = 13
 };
 
 // ================= 1. 强化的 Base64 解码器 =================
@@ -37,48 +40,167 @@ std::string base64_decode(const std::string &in) {
     return out;
 }
 
-// ================= 2. 状态机：双向语义上下文追踪 =================
-struct AgentContext {
-    std::string last_prompt;     
-    std::string accumulated_res; 
-    uint64_t timestamp;
-    uint32_t parent_pid;
+// ================= 2. 状态机：双向语义上下文追踪 (多轮对话+请求ID维度) =================
+struct ConversationTurn {
+    std::string request_id;       // 请求 ID（JSON-RPC id / HTTP x-request-id / 自生成）
+    std::string prompt;           // 本轮用户输入
+    std::string response;         // 本轮 AI 输出（SSE 流拼接）
+    uint64_t prompt_ts;
+    uint64_t last_resp_ts;
 };
 
 class AgentContextTracker {
 private:
-    std::unordered_map<uint32_t, AgentContext> context_map;
+    static const size_t MAX_TURNS    = 20;    // 每 Agent 最多保留轮次
+    static const size_t MAX_RESP_LEN = 8192;  // 单轮响应最大拼接长度
+
+    struct AgentState {
+        std::deque<ConversationTurn> turns;
+    };
+    std::unordered_map<uint32_t, AgentState> context_map;
+
+    std::string extract_request_id(const std::string& payload) {
+        // 1) JSON-RPC "id" 字段 (MCP 协议)
+        size_t pos = payload.find("\"id\"");
+        if (pos != std::string::npos) {
+            pos += 4;
+            while (pos < payload.length() && (payload[pos] == ' ' || payload[pos] == ':')) pos++;
+            if (pos < payload.length() && payload[pos] == '"') {
+                pos++;
+                std::string id;
+                while (pos < payload.length() && payload[pos] != '"' && payload[pos] != '\n') {
+                    id += payload[pos++];
+                }
+                if (!id.empty()) return id;
+            } else if (pos < payload.length() && std::isdigit(payload[pos])) {
+                std::string id;
+                while (pos < payload.length() && (std::isdigit(payload[pos]) || payload[pos] == '.')) {
+                    id += payload[pos++];
+                }
+                if (!id.empty()) return id;
+            }
+        }
+        // 2) HTTP x-request-id / request-id 头部
+        pos = payload.find("x-request-id:");
+        if (pos == std::string::npos) pos = payload.find("X-Request-Id:");
+        if (pos == std::string::npos) pos = payload.find("request-id:");
+        if (pos == std::string::npos) pos = payload.find("Request-Id:");
+        if (pos != std::string::npos) {
+            pos = payload.find(':', pos) + 1;
+            while (pos < payload.length() && payload[pos] == ' ') pos++;
+            std::string id;
+            while (pos < payload.length() && payload[pos] != '\r' && payload[pos] != '\n') {
+                id += payload[pos++];
+            }
+            if (!id.empty()) return id;
+        }
+        return ""; // 返回空串，由调用方自生成
+    }
 
 public:
-    void update_prompt(uint32_t agent_no, const std::string& prompt, uint64_t timestamp) {
-        context_map[agent_no].last_prompt = prompt;
-        context_map[agent_no].accumulated_res = ""; 
-        context_map[agent_no].timestamp = timestamp;
-        std::cout << "\n🟢 [用户输入 | Prompt] PID: " << agent_no << " 发现目标语义特征!\n" 
-                  << "  -> " << prompt << "\n";
+    void update_prompt(uint32_t agent_no, const std::string& prompt, uint64_t timestamp,
+                       const std::string* raw_payload = nullptr) {
+        auto& state = context_map[agent_no];
+        // 从原始 payload 中提取 request_id（HTTP 头 / JSON-RPC id），
+        // prompt 参数是已提取的纯文本，不含完整的 JSON 结构或 HTTP 头
+        std::string req_id = raw_payload ? extract_request_id(*raw_payload) : extract_request_id(prompt);
+        if (req_id.empty()) {
+            // 自生成：Agent编号 + 时间戳
+            req_id = "req_" + std::to_string(agent_no) + "_" + std::to_string(timestamp);
+        }
+
+        // 检查是否为同一请求的重传（相同 request_id 且上轮尚未有回复）
+        if (!state.turns.empty()) {
+            auto& last = state.turns.back();
+            if (last.request_id == req_id) {
+                // 重传：仅更新时间戳，保留已累积的响应
+                last.prompt = prompt;
+                last.prompt_ts = timestamp;
+                std::cout << "\n[Prompt *retransmit*] Agent: " << agent_no
+                          << " Request: " << req_id << "\n  -> " << prompt << "\n";
+                return;
+            }
+        }
+
+        // 新的一轮对话
+        ConversationTurn turn;
+        turn.request_id = req_id;
+        turn.prompt = prompt;
+        turn.prompt_ts = timestamp;
+        state.turns.push_back(turn);
+        while (state.turns.size() > MAX_TURNS) {
+            state.turns.pop_front();
+        }
+
+        std::cout << "\n[Prompt] Agent: " << agent_no
+                  << " Request: " << req_id << "\n  -> " << prompt << "\n";
     }
 
     void append_response(uint32_t agent_no, const std::string& response_chunk) {
-        if (context_map.find(agent_no) == context_map.end()) return;
-        if (context_map[agent_no].accumulated_res.length() < 1000) { 
-            context_map[agent_no].accumulated_res += response_chunk + " ";
-            std::cout << "🟣 [大模型输出 | Response] PID: " << agent_no << " 收到回复:\n" 
-                      << "  <- " << response_chunk << "\n";
+        auto it = context_map.find(agent_no);
+        if (it == context_map.end()) return;
+        auto& turns = it->second.turns;
+        if (turns.empty()) return;
+
+        // 响应追加到最近一轮（SSE 流式响应按序到达）
+        auto& active = turns.back();
+        if (active.response.length() < MAX_RESP_LEN) {
+            active.response += response_chunk;
+            active.last_resp_ts = 0; // 将在外部更新
+        }
+        std::cout << "[Response] Agent: " << agent_no
+                  << " Request: " << active.request_id << "\n  <- " << response_chunk << "\n";
+    }
+
+    void update_response_ts(uint32_t agent_no, uint64_t timestamp) {
+        auto it = context_map.find(agent_no);
+        if (it == context_map.end()) return;
+        auto& turns = it->second.turns;
+        if (!turns.empty()) {
+            turns.back().last_resp_ts = timestamp;
         }
     }
 
     std::string get_full_context(uint32_t agent_no) {
-        if (context_map.find(agent_no) != context_map.end() && !context_map[agent_no].last_prompt.empty()) {
-            std::string ctx = "Q: " + context_map[agent_no].last_prompt;
-            if (!context_map[agent_no].accumulated_res.empty()) ctx += " | A: " + context_map[agent_no].accumulated_res;
-            return ctx;
+        auto it = context_map.find(agent_no);
+        if (it == context_map.end() || it->second.turns.empty()) {
+            return "无明确语义上下文";
         }
-        return "无明确语义上下文";
+
+        // 取最近一轮完整的 Q&A
+        auto& last = it->second.turns.back();
+        std::string ctx = "Q[" + last.request_id + "]: " + last.prompt;
+        if (!last.response.empty()) {
+            ctx += " | A: " + last.response;
+        }
+        return ctx;
+    }
+
+    // 获取最近 N 轮对话历史摘要
+    std::string get_conversation_summary(uint32_t agent_no, size_t max_turns = 5) {
+        auto it = context_map.find(agent_no);
+        if (it == context_map.end() || it->second.turns.empty()) {
+            return "无对话历史";
+        }
+        std::string summary = "对话历史(" + std::to_string(it->second.turns.size()) + "轮):\n";
+        size_t start = it->second.turns.size() > max_turns
+                           ? it->second.turns.size() - max_turns
+                           : 0;
+        for (size_t i = start; i < it->second.turns.size(); i++) {
+            auto& t = it->second.turns[i];
+            summary += "  [" + t.request_id + "] Q: " + t.prompt.substr(0, 80)
+                       + (t.prompt.length() > 80 ? "..." : "") + "\n";
+            if (!t.response.empty()) {
+                summary += "       A: " + t.response.substr(0, 80)
+                           + (t.response.length() > 80 ? "..." : "") + "\n";
+            }
+        }
+        return summary;
     }
 
     void track_fork(uint32_t parent_pid, uint32_t child_pid) {
         if (context_map.find(parent_pid) != context_map.end()) {
-            context_map[child_pid] = context_map[parent_pid]; 
+            context_map[child_pid] = context_map[parent_pid];
         }
     }
 };
@@ -168,7 +290,7 @@ private:
         
         // --- 方案 A: 尝试使用标准的 JSON 解析库 (完美处理中文 \uXXXX 和转义符) ---
         try {
-            if (e_type == EVENT_SSL_READ) {
+            if (e_type == EVENT_SSL_READ || e_type == EVENT_STDIO_READ || e_type == EVENT_TCP_RECV) {
                 // 读取 SSE 流 (Server-Sent Events)
                 size_t pos = 0;
                 while ((pos = payload.find("data: ", pos)) != std::string::npos) {
@@ -193,7 +315,7 @@ private:
                 }
                 if (!result.empty()) return result;
             } 
-            else if (e_type == EVENT_SSL_WRITE) {
+            else if (e_type == EVENT_SSL_WRITE || e_type == EVENT_STDIO_WRITE || e_type == EVENT_TCP_SEND) {
                 // 解析完整的用户发包 JSON (包含整个聊天记录)
                 json j = json::parse(payload);
                 if (j.contains("messages") && j["messages"].is_array()) {
@@ -308,25 +430,24 @@ private:
 
         bool matched = false;
 
-        if (e_type == EVENT_SSL_WRITE) {
+        if (e_type == EVENT_SSL_WRITE || e_type == EVENT_STDIO_WRITE || e_type == EVENT_TCP_SEND) {
             if (lower_str.find("\"messages\"") != std::string::npos || 
                 lower_str.find("anthropic") != std::string::npos) {
                 
-                // 优先使用提取出的纯文本，如果为空则用截断的原文
-                std::string summary = pure_text.empty() ? clean_str.substr(0, 100) : pure_text.substr(0, 200);
-                summary += "...";
-                
-                tracker.update_prompt(pid, summary, timestamp);
+                // 传入完整 payload 以提取 request_id，同时保留纯文本用于展示
+                std::string prompt_text = pure_text.empty() ? clean_str : pure_text;
+                tracker.update_prompt(pid, prompt_text, timestamp, &actual_payload);
                 matched = true;
             }
         }
-        else if (e_type == EVENT_SSL_READ) {
+        else if (e_type == EVENT_SSL_READ || e_type == EVENT_STDIO_READ || e_type == EVENT_TCP_RECV) {
             if (lower_str.find("\"role\":\"assistant\"") != std::string::npos ||
                 lower_str.find("content_block_delta") != std::string::npos) {
                 
-                // SSE 流式数据：只把解析出的文字拼接到上下文，忽略框架结构
+                // SSE 流式数据：拼接至当前活跃轮次
                 if (!pure_text.empty()) {
                     tracker.append_response(pid, pure_text);
+                    tracker.update_response_ts(pid, timestamp);
                 }
                 matched = true;
             }
@@ -334,9 +455,9 @@ private:
 
         // ================= X-RAY 透视雷达 =================
         if (!matched && clean_str.length() > 20) {
-            std::string type_str = (e_type == EVENT_SSL_WRITE) ? "[WRITE 发送]" : "[READ  接收]";
-            // std::cout << "  📡 [X-Ray 透视] PID: " << pid << " " << type_str << " 截获底层数据:\n"
-            //           << "      " << clean_str.substr(0, 100) << "\n";
+            std::string type_str = (e_type == EVENT_SSL_WRITE || e_type == EVENT_STDIO_WRITE || e_type == EVENT_TCP_SEND) ? "[WRITE]" : "[READ]";
+            std::cout << "[X-Ray] PID: " << pid << " " << type_str << " data:\n"
+                      << "      " << clean_str.substr(0, 100) << "\n";
         }
     }
 
@@ -351,48 +472,75 @@ public:
         try {
             json event = json::parse(json_str);
             
-            // 1. 获取外层通用身份字段
-            std::string agent_name = event.value("agent_name", "Unknown");
-            uint32_t agent_no = event.value("agent_no", 0);
-            uint32_t behavior_no = event.value("behavior_no", 0);
+            // 1. 获取外层通用身份字段 (兼容 ebpf_events channel 的 flat JSON 格式)
+            uint32_t event_type = event.value("type", 0);  // flat JSON uses "type"
+            if (event_type == 0) event_type = event.value("behavior_no", 0);  // fallback: behavior events
             uint64_t timestamp = event.value("timestamp", 0);
 
-            // 2. 获取嵌套的操作层 operation
-            auto op = event.value("operation", json::object());
-            uint32_t pid = op.value("pid", 0);
-            std::string comm = op.value("comm", "unknown");
+            // 2. agent_id 可能是 "agent_82817" (字符串) 或 82817 (数字)
+            uint32_t agent_no = 0;
+            std::string agent_name = event.value("agent_name", "");
+            if (agent_name.empty()) {
+                if (event.contains("agent_id")) {
+                    if (event["agent_id"].is_number()) {
+                        agent_no = event["agent_id"].get<uint32_t>();
+                    } else if (event["agent_id"].is_string()) {
+                        std::string aid = event["agent_id"].get<std::string>();
+                        if (aid.rfind("agent_", 0) == 0) {
+                            agent_no = (uint32_t)std::stoul(aid.substr(6));
+                        }
+                    }
+                }
+            } else {
+                agent_no = event.value("agent_no", 0);
+            }
 
-            // 3. 处理网络行为 (SSL)
-            if (behavior_no == EVENT_SSL_WRITE || behavior_no == EVENT_SSL_READ) {
+            // 3. pid/comm 可能在顶层 (flat JSON) 或在 operation 子对象 (behavior JSON)
+            uint32_t pid = event.value("pid", 0);
+            std::string comm = event.value("comm", "unknown");
+            if (pid == 0) {
+                auto op = event.value("operation", json::object());
+                pid = op.value("pid", 0);
+                comm = op.value("comm", "unknown");
+            }
+
+            // 4. 用 pid 作为 agent_no 的兜底值
+            if (agent_no == 0) agent_no = pid;
+
+            if (event_type == EVENT_SSL_WRITE || event_type == EVENT_SSL_READ ||
+                event_type == EVENT_STDIO_READ || event_type == EVENT_STDIO_WRITE ||
+                event_type == EVENT_TCP_SEND || event_type == EVENT_TCP_RECV) {
                 std::string b64_payload = event.value("network_payload", "");
+                if (b64_payload.empty()) {
+                    b64_payload = event.value("data", "");
+                }
                 if (!b64_payload.empty()) {
                     std::string raw_payload = base64_decode(b64_payload);
-                    // 传入 agent_no 而不是 pid，实现跨 PID 的 Agent 语义聚合
-                    sniff_semantic_payload(agent_no, behavior_no, raw_payload, timestamp);
+                    sniff_semantic_payload(agent_no, event_type, raw_payload, timestamp);
                 }
             }
-            // 4. 处理系统行为
-            else if (behavior_no >= EVENT_EXECVE && behavior_no <= EVENT_CONNECT) {
+            // 5. 处理系统行为 (ebpf_events flat JSON 格式: filename/dip/dport 在顶层)
+            else if (event_type >= EVENT_EXECVE && event_type <= EVENT_AGENT_COMM) {
                 std::string action_desc = "";
-                if (behavior_no == EVENT_EXECVE) action_desc = "执行命令: " + op.value("target_file", "");
-                else if (behavior_no == EVENT_OPEN) action_desc = "访问文件: " + op.value("target_file", "");
-                else if (behavior_no == EVENT_CONNECT) action_desc = "网络连接至: " + op.value("dip", "") + ":" + std::to_string(op.value("dport", 0));
-                
-                // 获取该 Agent 的语义上下文
+                if (event_type == EVENT_EXECVE) action_desc = "执行命令: " + event.value("filename", "");
+                else if (event_type == EVENT_OPEN) action_desc = "访问文件: " + event.value("filename", "");
+                else if (event_type == EVENT_CONNECT) action_desc = "网络连接至: " + event.value("dip", "") + ":" + std::to_string(event.value("dport", 0));
+
                 std::string motive = tracker.get_full_context(agent_no);
-                
-                std::cout << "[" << format_time(timestamp) << "] 🚨 [智能体审计] \n"
-                          << "  -> Agent: " << agent_name << " (ID: " << agent_no << ")\n"
+
+                std::cout << "[" << format_time(timestamp) << "] Agent: " << agent_name << " (ID: " << agent_no << ")\n"
                           << "  -> PID: " << pid << " (" << comm << ")\n"
-                          << "  -> 动作: " << action_desc << "\n"
-                          << "  -> 语义上下文: " << motive << "\n\n";
+                          << "  -> Action: " << action_desc << "\n"
+                          << "  -> Context: " << motive << "\n\n";
             }
         } catch (const json::parse_error& e) {
-            std::cerr << "JSON 解析错误: " << e.what() << std::endl;
+            std::cerr << "JSON parse error: " << e.what() << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "Error processing event: " << e.what() << std::endl;
         }
     }
     void run() {
-        std::cout << "🟢 C++ Trace && SSL_FETCH 启动成功！\n";
+        std::cout << "C++ Trace Analyzer started, subscribing to ebpf_events\n";
         redisReply* reply = (redisReply*)redisCommand(redis_ctx, "SUBSCRIBE ebpf_events");
         if (reply) freeReplyObject(reply);
 

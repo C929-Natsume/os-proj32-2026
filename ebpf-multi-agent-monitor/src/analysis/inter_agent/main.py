@@ -13,6 +13,8 @@ except ImportError:  # pragma: no cover
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from protocol_fingerprint import fingerprint_protocol, extract_mcp_fields, extract_anp_dids
+
 EVENT_EXECVE = 1
 EVENT_FORK = 2
 EVENT_OPEN = 3
@@ -20,6 +22,12 @@ EVENT_UNLINK = 4
 EVENT_CONNECT = 5
 EVENT_SSL_READ = 6
 EVENT_SSL_WRITE = 7
+EVENT_CHMOD = 8
+EVENT_AGENT_COMM = 9
+EVENT_STDIO_READ = 10
+EVENT_STDIO_WRITE = 11
+EVENT_TCP_SEND = 12
+EVENT_TCP_RECV = 13
 
 
 class InterAgentAnalyzer:
@@ -76,6 +84,9 @@ class InterAgentAnalyzer:
         ]
         self.loop_markers = ["continue", "retry", "again", "repeat", "try again"]
         self.mining_markers = ["xmrig", "stratum", "cryptonight", "miner"]
+
+        self.inter_agent_comm_graph = defaultdict(lambda: {"peer_count": 0, "peer_pids": set(), "first_seen_ns": 0})
+        self.inter_agent_payloads = defaultdict(lambda: deque(maxlen=50))
 
         self._load_rules()
 
@@ -195,10 +206,14 @@ class InterAgentAnalyzer:
 
     @staticmethod
     def _normalize_text(text):
+        if isinstance(text, bytes):
+            text = text.decode("utf-8", errors="replace")
         normalized = re.sub(r"\s+", " ", (text or "").strip().lower())
         return normalized[:512]
 
     def _contains_any(self, text, markers):
+        if isinstance(text, bytes):
+            text = text.decode("utf-8", errors="replace")
         lowered = (text or "").lower()
         return any(marker in lowered for marker in markers)
 
@@ -223,6 +238,110 @@ class InterAgentAnalyzer:
         if not ip.is_private and not ip.is_loopback:
             return False
         return any(ip in network for network in self.allowed_private_networks)
+
+    def _analyze_inter_agent_comm(self, event_data, stats, current_ts_ns):
+        alerts = []
+        pid = event_data.get("pid", 0)
+        peer_agent_id = event_data.get("peer_agent_id", 0)
+        peer_pid = event_data.get("peer_pid", 0)
+        peer_name = event_data.get("peer_agent_name", "")
+
+        self.inter_agent_comm_graph[pid]["peer_count"] += 1
+        if peer_pid:
+            self.inter_agent_comm_graph[pid]["peer_pids"].add(peer_pid)
+        if not self.inter_agent_comm_graph[pid]["first_seen_ns"]:
+            self.inter_agent_comm_graph[pid]["first_seen_ns"] = current_ts_ns
+
+        if peer_pid:
+            comm_entry = self.inter_agent_comm_graph[peer_pid]
+            comm_entry["peer_count"] += 1
+            comm_entry["peer_pids"].add(pid)
+            if not comm_entry["first_seen_ns"]:
+                comm_entry["first_seen_ns"] = current_ts_ns
+
+        alert = self._emit_alert(
+            current_ts_ns, f"agent_comm:{pid}:{peer_pid}", "INTER_AGENT_COMMUNICATION_DETECTED", pid, "MEDIUM",
+            f"Agent PID={pid} 与 Agent PID={peer_pid} agent_id={peer_agent_id} ({peer_name}) 建立了通信",
+        )
+        if alert:
+            alerts.append(alert)
+
+        if self.inter_agent_comm_graph[pid]["peer_count"] > 8:
+            alert = self._emit_alert(
+                current_ts_ns, f"agent_comm_spam:{pid}", "AGENT_COMM_SPIKE", pid, "HIGH",
+                f"Agent PID={pid} 与 {self.inter_agent_comm_graph[pid]['peer_count']} 个对等体通信，异常频繁",
+            )
+            if alert:
+                alerts.append(alert)
+
+        return alerts
+
+    def _analyze_raw_protocol(self, event_data, stats, current_ts_ns):
+        alerts = []
+        data = event_data.get("data", "")
+        event_type = event_data.get("type", 0)
+        source = event_data.get("source", 0)
+        pid = event_data.get("pid", 0)
+
+        if isinstance(data, bytes):
+            data = data.decode("utf-8", errors="replace")
+
+        protocol = event_data.get("_protocol", None)
+        if not protocol:
+            protocol = fingerprint_protocol(data, source=source, event_type=event_type)
+
+        if protocol and data:
+            self.inter_agent_payloads[pid].append((current_ts_ns, protocol, data[:256]))
+
+        normalized = self._normalize_text(data)
+
+        if normalized:
+            stats["payload_counts"][normalized] += 1
+            if stats["payload_counts"][normalized] >= self.repeat_payload_threshold and (
+                self._contains_any(normalized, self.loop_markers) or self._looks_repetitive_text(normalized)
+            ):
+                stats["last_loop_signal_ns"] = current_ts_ns
+                alert = self._emit_alert(
+                    current_ts_ns, f"proto_loop_payload:{pid}", "HALLUCINATION_INDUCED_LOOP", pid, "HIGH",
+                    f"Agent PID={pid} 在 {protocol or 'raw'} 协议中出现重复无进展语义片段，疑似幻觉诱导循环",
+                )
+                if alert:
+                    alerts.append(alert)
+
+        if protocol:
+            if self._contains_any(normalized, self.prompt_injection_markers):
+                alert = self._emit_alert(
+                    current_ts_ns, f"proto_injection:{pid}:{protocol}", "PROTOCOL_PROMPT_INJECTION", pid, "HIGH",
+                    f"Agent PID={pid} 在 {protocol} 协议通信中检测到提示注入信号",
+                )
+                if alert:
+                    alerts.append(alert)
+
+            if self._contains_any(normalized, self.high_risk_instruction_markers):
+                alert = self._emit_alert(
+                    current_ts_ns, f"proto_highrisk:{pid}:{protocol}", "PROTOCOL_HIGH_RISK_INSTRUCTION", pid, "CRITICAL",
+                    f"Agent PID={pid} 在 {protocol} 协议通信中检测到高危指令",
+                )
+                if alert:
+                    alerts.append(alert)
+
+        if self._contains_any(normalized, self.mining_markers):
+            alert = self._emit_alert(
+                current_ts_ns, f"proto_mining:{pid}", "FUNCTION_MISUSE_MINING_SIGNAL", pid, "HIGH",
+                f"Agent PID={pid} 在 {protocol or 'raw'} 协议通信中检测到疑似挖矿/滥用指令",
+            )
+            if alert:
+                alerts.append(alert)
+
+        if self._looks_repetitive_text(normalized):
+            alert = self._emit_alert(
+                current_ts_ns, f"proto_repetitive:{pid}", "SUSPICIOUS_REPETITIVE_PROTO_PAYLOAD", pid, "MEDIUM",
+                f"Agent PID={pid} 在 {protocol or 'raw'} 协议通信中出现超长重复文本",
+            )
+            if alert:
+                alerts.append(alert)
+
+        return alerts
 
     def _analyze_execve(self, event_data, stats, current_ts_ns):
         alerts = []
@@ -462,6 +581,13 @@ class InterAgentAnalyzer:
             alerts.extend(self._analyze_connect(event_data, stats, current_ts_ns))
         elif event_type in (EVENT_SSL_READ, EVENT_SSL_WRITE):
             alerts.extend(self._analyze_ssl(event_data, stats, current_ts_ns))
+        elif event_type == EVENT_AGENT_COMM:
+            alerts.extend(self._analyze_inter_agent_comm(event_data, stats, current_ts_ns))
+            alerts.extend(self._analyze_connect(event_data, stats, current_ts_ns))
+        elif event_type in (EVENT_STDIO_READ, EVENT_STDIO_WRITE, EVENT_TCP_SEND, EVENT_TCP_RECV):
+            alerts.extend(self._analyze_raw_protocol(event_data, stats, current_ts_ns))
+        elif event_type == EVENT_CHMOD:
+            alerts.extend(self._analyze_file_event(event_data, stats, current_ts_ns))
 
         alerts.extend(self.check_cross_agent_anomalies(current_ts_ns))
         return alerts
