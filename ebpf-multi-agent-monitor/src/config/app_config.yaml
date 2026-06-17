@@ -5,12 +5,16 @@ redis:
   db: 0
 
 llm:
-  enabled: false
-  api_key: api_key
+  enabled: true
+  api_key: ""
+  api_key_env: DEEPSEEK_API_KEY
   model: deepseek-chat
   endpoint: https://api.deepseek.com/chat/completions
   judge_cmd: ""
   timeout_sec: 15
+  max_input_chars: 1500
+  max_output_tokens: 256
+  templates: {}
 
 monitor:
   workspace_root: /mnt/e/os2026

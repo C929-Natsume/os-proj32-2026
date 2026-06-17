@@ -65,6 +65,8 @@ struct agent_state {
     struct agent_metrics metrics;
     unsigned long long prev_cpu_ticks;
     unsigned long long prev_cpu_sample_ns;
+    int depth;           // 调用树深度，根 agent = 0
+    int is_sub_agent;    // 2=候选子agent, 1=已确认子agent, 0=根agent
 };
 
 struct agent_agg {
@@ -560,13 +562,16 @@ static void publish_agent_registration(struct agent_state *state)
     snprintf(key, sizeof(key), "inter:agent:%s", state->agent_id);
     reply = redisCommand(
         redis_ctx,
-        "HSET %s agent_id %s parent_agent_id %s main_pid %u comm %s workspace %s status active group default",
+        "HSET %s agent_id %s parent_agent_id %s main_pid %u comm %s workspace %s "
+        "depth %d is_sub_agent %d status active group default",
         key,
         state->agent_id,
         state->parent_agent_id,
         state->main_pid,
         state->comm,
-        state->workspace
+        state->workspace,
+        state->depth,
+        state->is_sub_agent
     );
     finish_redis_command("redisCommand", reply);
 }
@@ -643,6 +648,9 @@ static struct agent_state *get_or_create_agent(unsigned int pid, unsigned int pp
         if (parent_agent_id == 0 && parent_state->parent_agent_id[0]) {
             strncpy(state->parent_agent_id, parent_state->parent_agent_id, sizeof(state->parent_agent_id) - 1);
         }
+        /* ── 根因识别：继承并递增深度 ── */
+        state->depth = parent_state->depth + 1;
+        state->is_sub_agent = 1;   /* 子进程标记为 sub_agent */
         return state;
     }
 
@@ -652,6 +660,9 @@ static struct agent_state *get_or_create_agent(unsigned int pid, unsigned int pp
     strncpy(state->comm,
             comm && comm[0] ? comm : detected_comm,
             sizeof(state->comm) - 1);
+    /* ── 根因识别：根 agent ── */
+    state->depth = 0;
+    state->is_sub_agent = 0;   /* 通过 cmdline 检测到的根 agent */
 
     publish_agent_registration(state);
     return state;
@@ -1157,7 +1168,7 @@ int ship_sys_event(struct sys_event *event)
         snprintf(
             value,
             sizeof(value),
-            "{\"type\":%u,\"pid\":%u,\"ppid\":%u,\"uid\":%u,\"timestamp\":%llu,\"comm\":\"%s\",\"dip\":\"%s\",\"dport\":%d,\"agent_id\":\"%s\",\"parent_agent_id\":%u,\"parent_agent_name\":\"%s\",\"main_pid\":%u,\"peer_agent_id\":%u,\"peer_pid\":%u}",
+            "{\"type\":%u,\"pid\":%u,\"ppid\":%u,\"uid\":%u,\"timestamp\":%llu,\"comm\":\"%s\",\"dip\":\"%s\",\"dport\":%d,\"agent_id\":\"%s\",\"parent_agent_id\":%u,\"parent_agent_name\":\"%s\",\"main_pid\":%u,\"depth\":%d,\"is_sub_agent\":%d,\"peer_agent_id\":%u,\"peer_pid\":%u}",
             event->event_type,
             event->pid,
             event->child_pid,
@@ -1170,6 +1181,8 @@ int ship_sys_event(struct sys_event *event)
             event->parent_agent_id,
             event->parent_agent_name,
             state ? state->main_pid : event->pid,
+            state ? state->depth : -1,
+            state ? state->is_sub_agent : -1,
             event->peer_agent_id,
             event->peer_pid
         );
@@ -1178,7 +1191,7 @@ int ship_sys_event(struct sys_event *event)
         snprintf(
             value,
             sizeof(value),
-            "{\"type\":%u,\"pid\":%u,\"ppid\":%u,\"uid\":%u,\"timestamp\":%llu,\"comm\":\"%s\",\"filename\":\"%s\",\"agent_id\":\"%s\",\"parent_agent_id\":%u,\"parent_agent_name\":\"%s\",\"main_pid\":%u}",
+            "{\"type\":%u,\"pid\":%u,\"ppid\":%u,\"uid\":%u,\"timestamp\":%llu,\"comm\":\"%s\",\"filename\":\"%s\",\"agent_id\":\"%s\",\"parent_agent_id\":%u,\"parent_agent_name\":\"%s\",\"main_pid\":%u,\"depth\":%d,\"is_sub_agent\":%d}",
             event->event_type,
             event->pid,
             event->child_pid,
@@ -1189,7 +1202,9 @@ int ship_sys_event(struct sys_event *event)
             state ? state->agent_id : "",
             event->parent_agent_id,
             event->parent_agent_name,
-            state ? state->main_pid : event->pid
+            state ? state->main_pid : event->pid,
+            state ? state->depth : -1,
+            state ? state->is_sub_agent : -1
         );
     }
 

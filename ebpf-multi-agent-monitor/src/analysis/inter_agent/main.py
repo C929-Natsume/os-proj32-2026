@@ -96,6 +96,10 @@ class InterAgentAnalyzer:
         self.global_events = deque()
         self.last_alert_time = defaultdict(int)
 
+        # 跨进程语义上下文传递
+        self.semantic_lineage = {}   # child_pid → root_agent_pid
+        self.semantic_context = {}   # root_pid → dict of semantic timestamps
+
         print("[INTER] Inter-Agent Analyzer initialized")
 
     def _load_rules(self):
@@ -174,6 +178,29 @@ class InterAgentAnalyzer:
             stats = self._new_stats(pid, ts_ns)
             self.agent_stats[pid] = stats
         return stats
+
+    # 语义上下文跨进程传递
+    def _semantic_root(self, pid):
+        """沿血缘链向上查找语义根节点（主 agent 进程 PID）"""
+        root = pid
+        visited = set()
+        while root in self.semantic_lineage and root not in visited:
+            visited.add(root)
+            root = self.semantic_lineage[root]
+        return root
+
+    def _get_semantic_context(self, pid):
+        """获取进程树共享的语义上下文，不存在则创建"""
+        root = self._semantic_root(pid)
+        if root not in self.semantic_context:
+            self.semantic_context[root] = {
+                "last_high_risk_prompt_ns": 0,
+                "last_prompt_injection_ns": 0,
+                "last_loop_signal_ns": 0,
+                "last_download_exec_ns": 0,
+                "last_high_risk_in_protocol_ns": 0,
+            }
+        return self.semantic_context[root]
 
     def _record_global_event(self, ts_ns, pid, event_type):
         self.global_events.append((ts_ns, pid, event_type))
@@ -276,7 +303,7 @@ class InterAgentAnalyzer:
 
         return alerts
 
-    def _analyze_raw_protocol(self, event_data, stats, current_ts_ns):
+    def _analyze_raw_protocol(self, event_data, stats, sem_ctx, current_ts_ns):
         alerts = []
         data = event_data.get("data", "")
         event_type = event_data.get("type", 0)
@@ -300,7 +327,7 @@ class InterAgentAnalyzer:
             if stats["payload_counts"][normalized] >= self.repeat_payload_threshold and (
                 self._contains_any(normalized, self.loop_markers) or self._looks_repetitive_text(normalized)
             ):
-                stats["last_loop_signal_ns"] = current_ts_ns
+                sem_ctx["last_loop_signal_ns"] = current_ts_ns
                 alert = self._emit_alert(
                     current_ts_ns, f"proto_loop_payload:{pid}", "HALLUCINATION_INDUCED_LOOP", pid, "HIGH",
                     f"Agent PID={pid} 在 {protocol or 'raw'} 协议中出现重复无进展语义片段，疑似幻觉诱导循环",
@@ -310,6 +337,8 @@ class InterAgentAnalyzer:
 
         if protocol:
             if self._contains_any(normalized, self.prompt_injection_markers):
+                # 写入共享语义上下文以启用跨事件关联
+                sem_ctx["last_prompt_injection_ns"] = current_ts_ns
                 alert = self._emit_alert(
                     current_ts_ns, f"proto_injection:{pid}:{protocol}", "PROTOCOL_PROMPT_INJECTION", pid, "HIGH",
                     f"Agent PID={pid} 在 {protocol} 协议通信中检测到提示注入信号",
@@ -318,6 +347,8 @@ class InterAgentAnalyzer:
                     alerts.append(alert)
 
             if self._contains_any(normalized, self.high_risk_instruction_markers):
+                sem_ctx["last_high_risk_prompt_ns"] = current_ts_ns
+                sem_ctx["last_high_risk_in_protocol_ns"] = current_ts_ns
                 alert = self._emit_alert(
                     current_ts_ns, f"proto_highrisk:{pid}:{protocol}", "PROTOCOL_HIGH_RISK_INSTRUCTION", pid, "CRITICAL",
                     f"Agent PID={pid} 在 {protocol} 协议通信中检测到高危指令",
@@ -343,15 +374,16 @@ class InterAgentAnalyzer:
 
         return alerts
 
-    def _analyze_execve(self, event_data, stats, current_ts_ns):
+    def _analyze_execve(self, event_data, stats, sem_ctx, current_ts_ns):
         alerts = []
         path = event_data.get("filename", "") or ""
         base = os.path.basename(path)
         pid = event_data.get("pid", 0)
+        sem_root = self._semantic_root(pid)
         stats["recent_execs"].append((current_ts_ns, base, path))
 
         if base in self.download_bins:
-            stats["last_download_exec_ns"] = current_ts_ns
+            sem_ctx["last_download_exec_ns"] = current_ts_ns
 
         if base == "sudo":
             alert = self._emit_alert(
@@ -361,7 +393,7 @@ class InterAgentAnalyzer:
             if alert:
                 alerts.append(alert)
 
-        if base in self.interpreter_bins and current_ts_ns - stats["last_download_exec_ns"] <= self.correlation_window_ns:
+        if base in self.interpreter_bins and current_ts_ns - sem_ctx["last_download_exec_ns"] <= self.correlation_window_ns:
             alert = self._emit_alert(
                 current_ts_ns, f"download_exec:{pid}", "SUSPICIOUS_DOWNLOAD_EXEC_CHAIN", pid, "HIGH",
                 f"Agent PID={pid} 出现下载后执行链路: {path}",
@@ -370,27 +402,38 @@ class InterAgentAnalyzer:
                 alerts.append(alert)
 
         if base in self.shell_bins:
+            lineage_note = f" (语义来自 PID={sem_root})" if sem_root != pid else ""
             alert = self._emit_alert(
                 current_ts_ns, f"shell:{pid}", "UNEXPECTED_SHELL_EXEC_CHAIN", pid, "HIGH",
                 f"Agent PID={pid} 启动了非预期 shell: {path}",
             )
             if alert:
                 alerts.append(alert)
-            if current_ts_ns - stats["last_high_risk_prompt_ns"] <= self.correlation_window_ns:
+            # 读取共享语义上下文
+            if current_ts_ns - sem_ctx["last_high_risk_prompt_ns"] <= self.correlation_window_ns:
                 alert = self._emit_alert(
                     current_ts_ns, f"prompt_shell:{pid}", "PROMPT_INJECTION_TO_DANGEROUS_ACTION", pid, "CRITICAL",
-                    f"Agent PID={pid} 在高危提示后执行 shell: {path}",
+                    f"Agent PID={pid} 在高危提示后执行 shell: {path}{lineage_note}",
+                )
+                if alert:
+                    alerts.append(alert)
+            # prompt injection 标记现在也可触发跨事件关联
+            if current_ts_ns - sem_ctx["last_prompt_injection_ns"] <= self.correlation_window_ns:
+                alert = self._emit_alert(
+                    current_ts_ns, f"prompt_inj_shell:{pid}", "PROMPT_INJECTION_TO_DANGEROUS_ACTION", pid, "CRITICAL",
+                    f"Agent PID={pid} 在提示注入后执行 shell: {path}{lineage_note}",
                 )
                 if alert:
                     alerts.append(alert)
 
         return alerts
 
-    def _analyze_file_event(self, event_data, stats, current_ts_ns):
+    def _analyze_file_event(self, event_data, stats, sem_ctx, current_ts_ns):
         alerts = []
         path = event_data.get("filename", "") or ""
         pid = event_data.get("pid", 0)
         event_type = event_data.get("type", 0)
+        sem_root = self._semantic_root(pid)
         stats["path_counts"][path] += 1
         path_count = stats["path_counts"][path]
 
@@ -427,7 +470,7 @@ class InterAgentAnalyzer:
             )
             if alert:
                 alerts.append(alert)
-            if current_ts_ns - stats["last_loop_signal_ns"] <= self.correlation_window_ns:
+            if current_ts_ns - sem_ctx["last_loop_signal_ns"] <= self.correlation_window_ns:
                 alert = self._emit_alert(
                     current_ts_ns, f"hallucination_io:{pid}:{path}", "HALLUCINATION_INDUCED_LOOP", pid, "HIGH",
                     f"Agent PID={pid} 出现重复语义信号并伴随文件风暴: {path}",
@@ -435,21 +478,30 @@ class InterAgentAnalyzer:
                 if alert:
                     alerts.append(alert)
 
-        if current_ts_ns - stats["last_high_risk_prompt_ns"] <= self.correlation_window_ns:
+        lineage_note = f" (语义来自 PID={sem_root})" if sem_root != pid else ""
+        if current_ts_ns - sem_ctx["last_high_risk_prompt_ns"] <= self.correlation_window_ns:
             alert = self._emit_alert(
                 current_ts_ns, f"prompt_file:{pid}:{path}", "PROMPT_INJECTION_TO_DANGEROUS_ACTION", pid, "CRITICAL",
-                f"Agent PID={pid} 在高危提示后触发文件操作: {path}",
+                f"Agent PID={pid} 在高危提示后触发文件操作: {path}{lineage_note}",
+            )
+            if alert:
+                alerts.append(alert)
+        if current_ts_ns - sem_ctx["last_prompt_injection_ns"] <= self.correlation_window_ns:
+            alert = self._emit_alert(
+                current_ts_ns, f"prompt_inj_file:{pid}:{path}", "PROMPT_INJECTION_TO_DANGEROUS_ACTION", pid, "CRITICAL",
+                f"Agent PID={pid} 在提示注入后触发文件操作: {path}{lineage_note}",
             )
             if alert:
                 alerts.append(alert)
 
         return alerts
 
-    def _analyze_connect(self, event_data, stats, current_ts_ns):
+    def _analyze_connect(self, event_data, stats, sem_ctx, current_ts_ns):
         alerts = []
         pid = event_data.get("pid", 0)
         dip = event_data.get("dip", "") or ""
         dport = int(event_data.get("dport", 0) or 0)
+        sem_root = self._semantic_root(pid)
         stats["connect_count"] += 1
 
         if stats["connect_count"] >= self.high_api_connect_threshold:
@@ -481,17 +533,25 @@ class InterAgentAnalyzer:
             if alert:
                 alerts.append(alert)
 
-        if current_ts_ns - stats["last_high_risk_prompt_ns"] <= self.correlation_window_ns:
+        lineage_note = f" (语义来自 PID={sem_root})" if sem_root != pid else ""
+        if current_ts_ns - sem_ctx["last_high_risk_prompt_ns"] <= self.correlation_window_ns:
             alert = self._emit_alert(
                 current_ts_ns, f"prompt_net:{pid}:{dip}:{dport}", "PROMPT_INJECTION_TO_DANGEROUS_ACTION", pid, "CRITICAL",
-                f"Agent PID={pid} 在高危提示后发起外联: {dip}:{dport}",
+                f"Agent PID={pid} 在高危提示后发起外联: {dip}:{dport}{lineage_note}",
+            )
+            if alert:
+                alerts.append(alert)
+        if current_ts_ns - sem_ctx["last_prompt_injection_ns"] <= self.correlation_window_ns:
+            alert = self._emit_alert(
+                current_ts_ns, f"prompt_inj_net:{pid}:{dip}:{dport}", "PROMPT_INJECTION_TO_DANGEROUS_ACTION", pid, "CRITICAL",
+                f"Agent PID={pid} 在提示注入后发起外联: {dip}:{dport}{lineage_note}",
             )
             if alert:
                 alerts.append(alert)
 
         return alerts
 
-    def _analyze_ssl(self, event_data, stats, current_ts_ns):
+    def _analyze_ssl(self, event_data, stats, sem_ctx, current_ts_ns):
         alerts = []
         pid = event_data.get("pid", 0)
         data = event_data.get("data", "") or ""
@@ -513,7 +573,7 @@ class InterAgentAnalyzer:
             if stats["payload_counts"][normalized] >= self.repeat_payload_threshold and (
                 self._contains_any(normalized, self.loop_markers) or self._looks_repetitive_text(normalized)
             ):
-                stats["last_loop_signal_ns"] = current_ts_ns
+                sem_ctx["last_loop_signal_ns"] = current_ts_ns
                 alert = self._emit_alert(
                     current_ts_ns, f"loop_payload:{pid}", "HALLUCINATION_INDUCED_LOOP", pid, "HIGH",
                     f"Agent PID={pid} 出现重复无进展语义片段，疑似幻觉诱导循环",
@@ -522,7 +582,7 @@ class InterAgentAnalyzer:
                     alerts.append(alert)
 
         if self._contains_any(normalized, self.prompt_injection_markers):
-            stats["last_prompt_injection_ns"] = current_ts_ns
+            sem_ctx["last_prompt_injection_ns"] = current_ts_ns
             alert = self._emit_alert(
                 current_ts_ns, f"prompt_injection:{pid}", "PROMPT_INJECTION_SIGNAL", pid, "HIGH",
                 f"Agent PID={pid} 的 SSL 明文中出现提示注入特征",
@@ -531,7 +591,7 @@ class InterAgentAnalyzer:
                 alerts.append(alert)
 
         if self._contains_any(normalized, self.high_risk_instruction_markers):
-            stats["last_high_risk_prompt_ns"] = current_ts_ns
+            sem_ctx["last_high_risk_prompt_ns"] = current_ts_ns
             alert = self._emit_alert(
                 current_ts_ns, f"high_risk_prompt:{pid}", "HIGH_RISK_INSTRUCTION_IN_SSL", pid, "CRITICAL",
                 f"Agent PID={pid} 的 SSL 明文中出现高危操作指令",
@@ -566,28 +626,35 @@ class InterAgentAnalyzer:
 
         if ppid and ppid != pid:
             self.agent_graph[ppid].add(pid)
+            # 语义上下文继承
+            parent_root = self._semantic_root(ppid)
+            if parent_root != pid:
+                self.semantic_lineage[pid] = parent_root
         if event_type == EVENT_FORK and pid:
             stats["fork_count"] += 1
 
         self.agent_activities[pid].append(event_data)
         self._record_global_event(current_ts_ns, pid, event_type)
 
+        # 解析当前进程树的共享语义上下文
+        sem_ctx = self._get_semantic_context(pid)
+
         alerts = []
         if event_type == EVENT_EXECVE:
-            alerts.extend(self._analyze_execve(event_data, stats, current_ts_ns))
+            alerts.extend(self._analyze_execve(event_data, stats, sem_ctx, current_ts_ns))
         elif event_type in (EVENT_OPEN, EVENT_UNLINK):
-            alerts.extend(self._analyze_file_event(event_data, stats, current_ts_ns))
+            alerts.extend(self._analyze_file_event(event_data, stats, sem_ctx, current_ts_ns))
         elif event_type == EVENT_CONNECT:
-            alerts.extend(self._analyze_connect(event_data, stats, current_ts_ns))
+            alerts.extend(self._analyze_connect(event_data, stats, sem_ctx, current_ts_ns))
         elif event_type in (EVENT_SSL_READ, EVENT_SSL_WRITE):
-            alerts.extend(self._analyze_ssl(event_data, stats, current_ts_ns))
+            alerts.extend(self._analyze_ssl(event_data, stats, sem_ctx, current_ts_ns))
         elif event_type == EVENT_AGENT_COMM:
             alerts.extend(self._analyze_inter_agent_comm(event_data, stats, current_ts_ns))
-            alerts.extend(self._analyze_connect(event_data, stats, current_ts_ns))
+            alerts.extend(self._analyze_connect(event_data, stats, sem_ctx, current_ts_ns))
         elif event_type in (EVENT_STDIO_READ, EVENT_STDIO_WRITE, EVENT_TCP_SEND, EVENT_TCP_RECV):
-            alerts.extend(self._analyze_raw_protocol(event_data, stats, current_ts_ns))
+            alerts.extend(self._analyze_raw_protocol(event_data, stats, sem_ctx, current_ts_ns))
         elif event_type == EVENT_CHMOD:
-            alerts.extend(self._analyze_file_event(event_data, stats, current_ts_ns))
+            alerts.extend(self._analyze_file_event(event_data, stats, sem_ctx, current_ts_ns))
 
         alerts.extend(self.check_cross_agent_anomalies(current_ts_ns))
         return alerts

@@ -97,6 +97,43 @@ class MainAnalyzer:
     def _agent_id_for_pid(self, pid):
         return f"agent_{int(pid)}"
 
+    def _enrich_semantic_context(self, agent_id, pid, ts_ns):
+        """根因识别：从 inter:messages 反向查找异常发生前的最近 prompt/response"""
+        if not self.redis_client or not agent_id:
+            return None
+        lookback_window = 30 * 1_000_000_000  # 30s 回查窗口
+        cutoff = max(0, ts_ns - lookback_window)
+        try:
+            raw = self.redis_client.xrevrange(
+                MESSAGE_STREAM, "+", "-", count=20,
+            )
+            if not raw:
+                return None
+            messages = []
+            for _stream_id, fields in raw:
+                f = {self._safe_decode(k): self._safe_decode(v) for k, v in (fields or {}).items()}
+                msg_ts = self._coerce_int(f.get("timestamp_ns", 0))
+                msg_agent = f.get("agent_id", f.get("src", ""))
+                msg_type = f.get("type", "")
+                if msg_agent == agent_id and msg_ts >= cutoff and msg_type in ("prompt", "response"):
+                    data_preview = f.get("data", "")[:200]
+                    messages.append({
+                        "timestamp_ns": msg_ts,
+                        "type": msg_type,
+                        "preview": data_preview,
+                        "pid": self._coerce_int(f.get("pid", 0)),
+                    })
+            if messages:
+                messages.sort(key=lambda m: m["timestamp_ns"])
+                return {
+                    "agent_id": agent_id,
+                    "lookback_ns": lookback_window,
+                    "messages": messages[-5:],  # 最近 5 条
+                }
+        except Exception as e:
+            print(f"[ANALYZER] Semantic context lookup failed: {e}")
+        return None
+
     def _pid_from_agent_id(self, agent_id):
         if not agent_id:
             return 0
@@ -110,6 +147,16 @@ class MainAnalyzer:
 
     def _push_anomaly(self, payload):
         self.anomaly_seq += 1
+        # 根因识别
+        details = dict(payload.get("details", {})) if isinstance(payload.get("details"), dict) else {}
+        sem_context = self._enrich_semantic_context(
+            agent_id=payload.get("agent_id", ""),
+            pid=payload.get("pid", 0),
+            ts_ns=payload.get("timestamp_ns", time.time_ns()),
+        )
+        if sem_context:
+            details["semantic_context"] = sem_context
+
         record = {
             "anomaly_id": f"anom_{self.anomaly_seq:06d}",
             "rule": str(payload.get("rule", "UNKNOWN")),
@@ -121,7 +168,7 @@ class MainAnalyzer:
             "agent_id": str(payload.get("agent_id", self._agent_id_for_pid(payload.get("pid", 0)))),
             "object": str(payload.get("object", "-")),
             "reason": str(payload.get("reason", payload.get("description", "-"))),
-            "details": json.dumps(payload.get("details", {}), ensure_ascii=False),
+            "details": json.dumps(details, ensure_ascii=False),
         }
         if self.redis_client:
             try:
