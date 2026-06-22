@@ -1,0 +1,22 @@
+{
+  "topology": "hierarchical",
+  "num_agents": 4,
+  "agent_ids": [
+    "agent_0",
+    "agent_1",
+    "agent_2",
+    "agent_3"
+  ],
+  "rounds": 60,
+  "inject_rate": 0.3,
+  "normal_count": 42,
+  "anomaly_count": 18,
+  "anomaly_types": [
+    "resource",
+    "security",
+    "supervisor_bypass",
+    "worker_isolated"
+  ],
+  "source": "autogen_hierarchical",
+  "_topology": "hierarchical"
+}

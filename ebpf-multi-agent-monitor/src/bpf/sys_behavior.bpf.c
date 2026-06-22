@@ -581,23 +581,62 @@ int BPF_KSYSCALL(sys_read_stdio, unsigned int fd, char *buf, size_t count) {
 }
 
 SEC("ksyscall/write")
-int BPF_KSYSCALL(sys_write_stdio, unsigned int fd, char *buf, size_t count) {
+int BPF_KSYSCALL(sys_write_raw, unsigned int fd, char *buf, size_t count) {
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
+
+    try_auto_register(&monitored_pids);
 
     struct process_context *pctx = bpf_map_lookup_elem(&monitored_pids, &pid);
     if (!pctx) return 0;
 
-    if (fd == 1 || fd == 2) {
-        __u32 peer = 0;
-        if (pctx->parent_pid != 0) {
-            struct process_context *parent_ctx = bpf_map_lookup_elem(&monitored_pids, &pctx->parent_pid);
-            if (parent_ctx) {
-                peer = pctx->parent_pid;
-            }
+    __u32 peer = 0;
+    if (pctx->parent_pid != 0) {
+        struct process_context *parent_ctx = bpf_map_lookup_elem(&monitored_pids, &pctx->parent_pid);
+        if (parent_ctx) {
+            peer = pctx->parent_pid;
         }
-        submit_raw_event(pid, fd, buf, count, 1, RAW_SRC_STDIO, peer);
-        return 0;
     }
+
+    if (fd == 1 || fd == 2) {
+        submit_raw_event(pid, fd, buf, count, 1, RAW_SRC_STDIO, peer);
+    } else {
+        submit_raw_event(pid, fd, buf, count, 1, RAW_SRC_TCP, peer);
+    }
+
+    return 0;
+}
+
+SEC("ksyscall/sendto")
+int BPF_KSYSCALL(sys_sendto_raw, int fd, char *buf, size_t len, int flags,
+                 void *dest_addr, int addr_len) {
+    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+
+    try_auto_register(&monitored_pids);
+
+    struct process_context *pctx = bpf_map_lookup_elem(&monitored_pids, &pid);
+    if (!pctx) return 0;
+
+    __u32 peer = 0;
+    if (pctx->parent_pid != 0) {
+        struct process_context *parent_ctx = bpf_map_lookup_elem(&monitored_pids, &pctx->parent_pid);
+        if (parent_ctx) {
+            peer = pctx->parent_pid;
+        }
+    }
+
+    submit_raw_event(pid, fd, buf, len, 1, RAW_SRC_TCP, peer);
+    return 0;
+}
+
+SEC("ksyscall/recvfrom")
+int BPF_KSYSCALL(sys_recvfrom_raw, int fd, char *buf, size_t len, int flags,
+                 void *src_addr, int *addr_len) {
+    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+
+    try_auto_register(&monitored_pids);
+
+    struct process_context *pctx = bpf_map_lookup_elem(&monitored_pids, &pid);
+    if (!pctx) return 0;
 
     return 0;
 }
@@ -606,13 +645,20 @@ int BPF_KSYSCALL(sys_write_stdio, unsigned int fd, char *buf, size_t count) {
 static __always_inline int read_msghdr_payload(struct user_msghdr *msg, __u8 *dst, __u32 max_len) {
     if (!msg || max_len == 0) return 0;
 
-    struct iovec iov = {0};
-    if (bpf_probe_read_user(&iov, sizeof(iov), &msg->msg_iov) != 0)
+    // Step 1: read iovec array pointer (extra level of indirection vs old buggy code)
+    struct iovec *iov_ptr = 0;
+    if (bpf_probe_read_user(&iov_ptr, sizeof(iov_ptr), &msg->msg_iov) != 0)
         return 0;
+    if (!iov_ptr) return 0;
 
+    // Step 2: dereference to get the actual first iovec
+    struct iovec iov = {};
+    if (bpf_probe_read_user(&iov, sizeof(iov), iov_ptr) != 0)
+        return 0;
     if (!iov.iov_base || iov.iov_len == 0)
         return 0;
 
+    // Step 3: read the actual payload data
     size_t copy_len = iov.iov_len;
     if (copy_len > max_len) copy_len = max_len;
 
@@ -625,6 +671,8 @@ static __always_inline int read_msghdr_payload(struct user_msghdr *msg, __u8 *ds
 SEC("ksyscall/sendmsg")
 int BPF_KSYSCALL(sys_sendmsg_raw, int fd, struct user_msghdr *msg, int flags) {
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
+
+    try_auto_register(&monitored_pids);
 
     struct process_context *pctx = bpf_map_lookup_elem(&monitored_pids, &pid);
     if (!pctx) return 0;
@@ -679,6 +727,8 @@ int BPF_KSYSCALL(sys_sendmsg_raw, int fd, struct user_msghdr *msg, int flags) {
 SEC("ksyscall/recvmsg")
 int BPF_KSYSCALL(sys_recvmsg_raw, int fd, struct user_msghdr *msg, int flags) {
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
+
+    try_auto_register(&monitored_pids);
 
     struct process_context *pctx = bpf_map_lookup_elem(&monitored_pids, &pid);
     if (!pctx) return 0;

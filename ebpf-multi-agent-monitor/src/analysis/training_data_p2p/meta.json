@@ -1,0 +1,22 @@
+{
+  "num_agents": 4,
+  "agent_ids": [
+    "agent_0",
+    "agent_1",
+    "agent_2",
+    "agent_3"
+  ],
+  "topology": "peer-to-peer",
+  "train_unlabeled": 56,
+  "train_labeled": 62,
+  "val_labeled": 15,
+  "test_labeled": 23,
+  "anomaly_types": [
+    "message_storm",
+    "propagation",
+    "group_split",
+    "flood_from_single"
+  ],
+  "source": "autogen_peer-to-peer",
+  "_topology": "peer-to-peer"
+}

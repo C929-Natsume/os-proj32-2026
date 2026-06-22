@@ -1,0 +1,20 @@
+{
+  "num_agents": 4,
+  "agent_ids": [
+    "agent_0",
+    "agent_1",
+    "agent_2",
+    "agent_3"
+  ],
+  "train_unlabeled": 350,
+  "train_labeled": 380,
+  "val_labeled": 90,
+  "test_labeled": 130,
+  "anomaly_types": [
+    "resource",
+    "security",
+    "logic",
+    "message",
+    "propagation"
+  ]
+}

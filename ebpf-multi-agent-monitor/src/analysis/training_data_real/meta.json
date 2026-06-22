@@ -1,0 +1,17 @@
+{
+  "source": "real_ebpf",
+  "input_files": [
+    "autogen_captured\\real_hierarchical.jsonl",
+    "autogen_captured\\real_peer_to_peer.jsonl"
+  ],
+  "total_normal": 44,
+  "total_anomaly": 21,
+  "train_unlabeled": 32,
+  "train_labeled": 38,
+  "val_labeled": 9,
+  "test_labeled": 18,
+  "_topologies": [
+    "hierarchical",
+    "peer-to-peer"
+  ]
+}
