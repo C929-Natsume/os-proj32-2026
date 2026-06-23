@@ -46,17 +46,29 @@ detection:
   llm_escalation_threshold: 0.7
 
 model:
-  node_dim: 8
+  node_dim: 30
   edge_dim: 6
   hidden_dim: 64
-  latent_dim: 16
+  latent_dim: 64
   num_heads: 4
   dropout: 0.1
   feature_weight: 0.65
+  model_path: "models/anomaly_detector.pth"
 
 intervention:
   enabled: true
   auto_isolate_risk: 0.8
+
+# Semantic anomaly detection (Qwen via SiliconFlow)
+semantic:
+  enabled: true
+  api_key: "sk-vnvjgpkafewfpaeuhfdofxeqpybbejyrkthwohdbdsrgaeaj"
+  base_url: "https://api.siliconflow.cn/v1"
+  model_name: "Qwen/Qwen2.5-14B-Instruct"
+  window_size: 3
+  risk_threshold: 0.5
+  timeout: 30
+  max_tokens: 1024
 
 # DeepSeek LLM escalation (optional)
 llm:

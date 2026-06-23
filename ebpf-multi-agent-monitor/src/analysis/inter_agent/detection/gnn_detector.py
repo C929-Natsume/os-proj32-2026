@@ -351,9 +351,11 @@ else:
 
 def extract_features(agents_data: Dict[str, dict], agent_ids: list,
                      interactions: list = None) -> np.ndarray:
-    """Extract node features: 14-dim (no content) or 22-dim (with content)."""
+    """Extract node features: 14-dim (no content) or 14+content_dim (with content)."""
+    from inter_agent.data.text_encoder import DEFAULT_CONTENT_DIM
+    content_dim = DEFAULT_CONTENT_DIM
     use_content = interactions is not None
-    dim = 22 if use_content else 14
+    dim = 14 + (content_dim if use_content else 0)
     x = np.zeros((n := len(agent_ids), dim), dtype=np.float32)
 
     content_feats = {}
@@ -400,7 +402,7 @@ def extract_features(agents_data: Dict[str, dict], agent_ids: list,
 
         if aid in content_feats:
             cf = content_feats[aid]
-            for k in range(8):
+            for k in range(min(len(cf), content_dim)):
                 x[i, 14 + k] = min(float(cf[k]), 1.0)
     return x
 

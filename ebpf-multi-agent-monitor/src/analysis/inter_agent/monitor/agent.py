@@ -11,6 +11,7 @@ from inter_agent.detection.gnn_detector import AnomalyDetector, RuleBasedDetecto
 from inter_agent.detection.temporal_detector import TemporalAnomalyDetector
 from inter_agent.detection.message_detector import MessageAnomalyDetector
 from inter_agent.detection.propagation_analyzer import PropagationPathAnalyzer
+from inter_agent.detection.semantic_detector import SemanticAnomalyDetector
 from inter_agent.intervention.topology import TopologyIntervention
 from inter_agent.llm.client import LLMEscalator
 
@@ -23,6 +24,15 @@ class ResponseLevel(Enum):
     BLOCK = "BLOCK"
     ISOLATE = "ISOLATE"
     LLM_ESCALATE = "LLM_ESCALATE"
+
+
+_RESPONSE_RANK = {
+    ResponseLevel.PASS: 0,
+    ResponseLevel.ALERT: 1,
+    ResponseLevel.BLOCK: 2,
+    ResponseLevel.ISOLATE: 3,
+    ResponseLevel.LLM_ESCALATE: 4,
+}
 
 
 @dataclass
@@ -43,6 +53,7 @@ class AnomalyReport:
     llm_escalated: bool = False
     llm_verdict: Optional[dict] = None
     escalation_context: dict = field(default_factory=dict)
+    semantic_result: dict = field(default_factory=dict)
 
 
 class MonitorAgent:
@@ -91,6 +102,19 @@ class MonitorAgent:
         self._intervention = TopologyIntervention(
             auto_isolate_risk=cfg.get("intervention", {}).get("auto_isolate_risk", 0.8),
         )
+
+        sem_cfg = cfg.get("semantic", {})
+        self._semantic_detector = SemanticAnomalyDetector(
+            api_key=sem_cfg.get("api_key"),
+            base_url=sem_cfg.get("base_url", "http://localhost:11434/v1"),
+            model_name=sem_cfg.get("model_name", "qwen2.5:7b"),
+            window_size=sem_cfg.get("window_size", 3),
+            risk_threshold=sem_cfg.get("risk_threshold", 0.5),
+            enabled=sem_cfg.get("enabled", True),
+            timeout=sem_cfg.get("timeout", 120),
+            max_tokens=sem_cfg.get("max_tokens", 8192),
+        )
+        self._semantic_threshold = sem_cfg.get("risk_threshold", 0.5)
 
         llm_cfg = cfg.get("llm", {})
         self._llm_escalator = LLMEscalator(
@@ -177,6 +201,15 @@ class MonitorAgent:
             llm_escalated = True
             response = ResponseLevel.LLM_ESCALATE
 
+        semantic_result = self._semantic_detector.detect(obs)
+        sem_risk = semantic_result.get("risk", 0.0)
+        if sem_risk >= self._semantic_threshold:
+            current_rank = _RESPONSE_RANK.get(response, 0)
+            alert_rank = _RESPONSE_RANK[ResponseLevel.ALERT]
+            if current_rank < alert_rank:
+                response = ResponseLevel.ALERT
+                max_risk = max(max_risk, sem_risk)
+
         report = AnomalyReport(
             timestamp_ns=ts,
             response_level=response,
@@ -198,6 +231,7 @@ class MonitorAgent:
             llm_escalated=llm_escalated,
             llm_verdict=llm_verdict,
             escalation_context=escalation_context,
+            semantic_result=semantic_result,
         )
 
         self._history.append(obs)
@@ -299,7 +333,7 @@ class MonitorAgent:
             return ResponseLevel.ISOLATE
         if max_risk >= 0.7:
             return ResponseLevel.BLOCK
-        if max_risk >= 0.4:
+        if max_risk >= 0.3:
             return ResponseLevel.ALERT
         return ResponseLevel.PASS
 
@@ -363,6 +397,7 @@ class MonitorAgent:
         self._interaction_graph.clear()
         self._utterance_graph.clear()
         self._temporal_detector.clear()
+        self._semantic_detector.clear()
         self._intervention.clear()
         self._history.clear()
         self._last_report = None

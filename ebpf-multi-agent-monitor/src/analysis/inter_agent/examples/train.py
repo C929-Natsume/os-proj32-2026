@@ -36,7 +36,7 @@ except ImportError:
     sys.exit(1)
 
 from inter_agent.data.simulator import Simulator
-from inter_agent.data.text_encoder import ContentFeatureExtractor
+from inter_agent.data.text_encoder import ContentFeatureExtractor, DEFAULT_CONTENT_DIM
 from inter_agent.graph.builder import AgentInteractionGraph
 from inter_agent.detection.gnn_detector import (
     DOMINANT, AnomalyClassifier, build_adjacency_matrix,
@@ -66,7 +66,7 @@ def observation_to_pyg(obs: dict, content_extractor=None):
     aid_to_idx = {aid: i for i, aid in enumerate(agent_ids)}
 
     use_content = content_extractor is not None
-    content_dim = getattr(content_extractor, 'content_dim', 8) if use_content else 0
+    content_dim = getattr(content_extractor, 'content_dim', DEFAULT_CONTENT_DIM) if use_content else 0
     dim = 14 + content_dim
 
     content_feats = {}

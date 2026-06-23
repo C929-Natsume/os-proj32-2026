@@ -29,8 +29,9 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_BASE_URL = "http://localhost:11434/v1"
-OLLAMA_MODEL = "tinyllama"
+API_BASE_URL = "https://api.siliconflow.cn/v1"
+API_MODEL = "Qwen/Qwen3.6-35B-A3B"
+API_KEY_ENV = "SILICONFLOW_API_KEY"
 
 SAMPLE_TASKS = [
     "List files in /tmp and report disk usage",
@@ -47,18 +48,21 @@ SAMPLE_TASKS = [
 
 
 def _make_oai_config():
-    return [{"model": OLLAMA_MODEL, "api_key": "ollama", "base_url": OLLAMA_BASE_URL}]
+    api_key = os.environ.get(API_KEY_ENV) or "sk-vnvjgpkafewfpaeuhfdofxeqpybbejyrkthwohdbdsrgaeaj"
+    return [{"model": API_MODEL, "api_key": api_key, "base_url": API_BASE_URL}]
 
 
-def _ollama_available() -> bool:
-    """Quick check if Ollama is reachable."""
+def _api_available() -> bool:
+    """Quick check if SiliconFlow API is reachable."""
     import urllib.request
+    api_key = _make_oai_config()[0]["api_key"]
     try:
         req = urllib.request.Request(
-            "http://localhost:11434/api/tags",
+            f"{API_BASE_URL}/models",
             method="GET",
+            headers={"Authorization": f"Bearer {api_key}"},
         )
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=10) as resp:
             return resp.status == 200
     except Exception:
         return False
@@ -167,6 +171,7 @@ def inject_supervisor_bypass(obs: dict, supervisor_id: str, worker_ids: list) ->
     })
     obs["label"] = 1
     obs["_anomaly_target"] = target
+    obs["_anomaly_type"] = "supervisor_bypass"
     obs["anomalies"].append({
         "agent_id": target, "rule": "SUPERVISOR_BYPASS",
         "severity": "HIGH", "risk_score": 0.85,
@@ -188,6 +193,7 @@ def inject_worker_isolated(obs: dict, supervisor_id: str, worker_ids: list) -> d
             obs["agents"][target][k] = 0
     obs["label"] = 1
     obs["_anomaly_target"] = target
+    obs["_anomaly_type"] = "worker_isolated"
     obs["anomalies"].append({
         "agent_id": target, "rule": "WORKER_ISOLATED",
         "severity": "MEDIUM", "risk_score": 0.7,
@@ -209,6 +215,7 @@ def inject_group_split(obs: dict, agent_ids: list) -> dict:
     ]
     obs["label"] = 1
     obs["_anomaly_target"] = agent_ids[:]
+    obs["_anomaly_type"] = "group_split"
     obs["anomalies"].append({
         "agent_id": agent_ids[0], "rule": "GROUP_SPLIT",
         "severity": "HIGH", "risk_score": 0.8,
@@ -236,6 +243,7 @@ def inject_flood_from_single(obs: dict, agent_ids: list) -> dict:
     obs["agents"][target]["cpu_usage"] = 0.90
     obs["label"] = 1
     obs["_anomaly_target"] = target
+    obs["_anomaly_type"] = "flood_from_single"
     obs["anomalies"].append({
         "agent_id": target, "rule": "FLOOD_FROM_SINGLE",
         "severity": "HIGH", "risk_score": 0.85,
@@ -334,6 +342,7 @@ def _inject_resource(obs: dict, supervisor_id: str, worker_ids: list) -> dict:
     obs["agents"][target]["proc_exec_count"] = 8
     obs["label"] = 1
     obs["_anomaly_target"] = target
+    obs["_anomaly_type"] = "resource"
     obs["anomalies"].append({
         "agent_id": target, "rule": "RESOURCE_EXHAUSTION",
         "severity": "HIGH", "risk_score": 0.9,
@@ -349,6 +358,7 @@ def _inject_security(obs: dict, supervisor_id: str, worker_ids: list) -> dict:
     obs["agents"][target]["fs_open_count"] = 25
     obs["label"] = 1
     obs["_anomaly_target"] = target
+    obs["_anomaly_type"] = "security"
     obs["anomalies"].append({
         "agent_id": target, "rule": "UNEXPECTED_SHELL_EXEC",
         "severity": "HIGH", "risk_score": 0.85,
@@ -373,6 +383,7 @@ def _inject_message_storm(obs: dict, agent_ids: list) -> dict:
     obs["agents"][target]["cpu_usage"] = 0.88
     obs["label"] = 1
     obs["_anomaly_target"] = target
+    obs["_anomaly_type"] = "message_storm"
     obs["anomalies"].append({
         "agent_id": target, "rule": "MESSAGE_STORM",
         "severity": "HIGH", "risk_score": 0.85,
@@ -399,6 +410,7 @@ def _inject_propagation(obs: dict, agent_ids: list) -> dict:
     obs["agents"][start]["cpu_usage"] = 0.95
     obs["label"] = 1
     obs["_anomaly_target"] = agent_ids[:]
+    obs["_anomaly_type"] = "propagation"
     obs["anomalies"].append({
         "agent_id": start, "rule": "CASCADE_PROPAGATION",
         "severity": "CRITICAL", "risk_score": 1.0,
@@ -426,7 +438,7 @@ def collect(topology: str, rounds: int = 10, inject_rate: float = 0.0,
     os.makedirs(output_dir, exist_ok=True)
 
     oai_config = _make_oai_config()
-    llm_config = {"config_list": oai_config, "max_tokens": 64}
+    llm_config = {"config_list": oai_config, "max_tokens": 128}
 
     if topology == "hierarchical":
         supervisor = autogen.ConversableAgent(
@@ -577,9 +589,9 @@ def main():
         format="[AUTOGEN] %(asctime)s %(message)s",
     )
 
-    if not _ollama_available():
-        logger.error("Ollama is not reachable at http://localhost:11434")
-        logger.error("Make sure Ollama is running: systemctl start ollama")
+    if not _api_available():
+        logger.error("SiliconFlow API is not reachable at %s", API_BASE_URL)
+        logger.error("Check network connectivity and API key")
         sys.exit(1)
 
     logger.info("Starting AutoGen %s collection (%d rounds, inject=%.0f%%)",
