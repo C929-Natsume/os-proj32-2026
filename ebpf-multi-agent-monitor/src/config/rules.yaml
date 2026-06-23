@@ -54,6 +54,11 @@ intra_agent:
     - OUT_OF_WORKSPACE_OPERATION
   gray_rules:
     - POSSIBLE_LOGIC_LOOP
+    - TASK_SPEC_VIOLATION
+    - ROLE_SPEC_VIOLATION
+    - STEP_REPETITION
+    - CONTEXT_LOSS
+    - TERMINATION_FAILURE
   llm_allow_suppress_rules: []
 
 inter_agent:

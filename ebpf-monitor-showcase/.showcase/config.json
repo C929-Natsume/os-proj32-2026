@@ -1,0 +1,50 @@
+{
+  "models": [
+    {
+      "id": 1,
+      "model_name": "deepseek-chat",
+      "model": "deepseek-chat",
+      "base_url": "https://api.deepseek.com/chat/completions",
+      "api_key": "",
+      "model_description": "主监控项目当前启用的审计模型",
+      "model_avatar_url": "",
+      "created_at": "2026-06-18T04:58:34.476Z",
+      "updated_at": "2026-06-18T04:58:34.476Z"
+    },
+    {
+      "id": 2,
+      "model_name": "qwen-plus",
+      "model": "qwen-plus",
+      "base_url": "",
+      "api_key": "",
+      "model_description": "展示用参考模型",
+      "model_avatar_url": "",
+      "created_at": "2026-06-18T04:58:34.476Z",
+      "updated_at": "2026-06-18T04:58:34.476Z"
+    }
+  ],
+  "active_model_id": 1,
+  "databases": [
+    {
+      "id": 1,
+      "database_name": "分析库",
+      "database_uri": "/mnt/e/os2026/ebpf-multi-agent-monitor/logs/alerts/analysis.db",
+      "database_type": "sqlite",
+      "database_description": "真实告警分析库，来源于 /mnt/e/os2026/ebpf-multi-agent-monitor",
+      "created_at": "2026-06-18T04:58:34.476Z",
+      "updated_at": "2026-06-18T04:58:34.476Z"
+    }
+  ],
+  "active_database_id": 1,
+  "schemas": [
+    {
+      "id": 1,
+      "schema_name": "监控审计视图",
+      "schema_content": "events, anomalies, audit_results",
+      "created_at": "2026-06-18T04:58:34.476Z",
+      "updated_at": "2026-06-18T04:58:34.476Z",
+      "user_id": 1
+    }
+  ],
+  "active_schema_id": 1
+}

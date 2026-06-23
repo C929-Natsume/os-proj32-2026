@@ -2,72 +2,50 @@
 
 ## 1. 模块定位
 
-LLM 审计模块位于单体审计阶段，用于对高风险或语义型异常进行二次判断，提升误报抑制能力与语义解释能力。
-
-整体位置：
+LLM 审计模块位于单体审计阶段，对高风险和语义型异常进行二次判断，用于降低误报并补充语义解释。
 
 ```text
 intra/inter analyzer -> AuditEngine -> LLM review -> audit result -> SQLite
 ```
 
-## 2. 当前已完成内容
+## 2. 已完成能力
 
-| 项 | 说明 |
-| --- | --- |
-| DeepSeek 接入 | `audit_engine.py` 已接入 DeepSeek Chat Completions API。 |
-| 安全配置 | API Key 通过环境变量 `DEEPSEEK_API_KEY` 注入，不写入仓库。 |
-| 结构化输出 | LLM 输出统一为 JSON，包含 `decision`、`risk_level`、`summary`、`reasoning`、`evidence`、`suggested_action`。 |
-| 兜底策略 | 当 LLM 不可用、超时或返回异常时，系统退回规则兜底告警。 |
-| 模板分流 | 不同异常类型进入不同审计模板，而不是共用单一提示词。 |
+- 已接入 DeepSeek Chat Completions API。
+- API Key 通过环境变量 `DEEPSEEK_API_KEY` 注入，不写入仓库。
+- LLM 输出统一为结构化 JSON，包含 `decision`、`risk_level`、`summary`、`reasoning`、`evidence`、`suggested_action`。
+- LLM 超时、异常或不可用时自动回退到规则兜底。
+- 不同异常进入不同审计模板，不使用单一提示词。
 
 ## 3. 审计流程
 
 ```text
-规则命中 -> 分类为 WHITE / GRAY / BLACK ->
-BLACK 事件进入 LLM 审计 ->
-LLM 返回结构化结果 ->
-生成 ALLOW / CORRELATE / ALERT / FORCE_ALERT
+规则命中 -> WHITE / GRAY / BLACK 分类 -> BLACK 进入 LLM 审计 -> 返回结构化结果 -> 生成审计动作
 ```
 
-说明：
+- `WHITE`：直接放行
+- `GRAY`：进入关联分析
+- `BLACK`：进入 LLM 二次审计
 
-- `WHITE`：直接放行。
-- `GRAY`：进入关联分析，不强依赖 LLM。
-- `BLACK`：进入 LLM 审计，由模型做二次确认或抑制判断。
+## 4. 五类异常与模板映射
 
-## 4. 当前模板划分
+项目层面保持 5 类顶层异常；实现层面使用 8 个业务模板，另有 `generic`、`generic_black` 作为兜底模板。
 
-| 模板 | 代表规则 | 关注点 |
+| 异常大类 | 代表规则 | 审计模板 |
 | --- | --- | --- |
-| `sensitive_file` | `SENSITIVE_FILE_ACCESS` | 敏感文件、凭据、越权读取、后续外传风险 |
-| `shell_exec` | `UNEXPECTED_SHELL_EXEC` | shell 执行、下载执行、提权、破坏性命令 |
-| `workspace_violation` | `OUT_OF_WORKSPACE_OPERATION` | 工作区外访问、删除、覆盖、越界写入 |
-| `prompt_injection_signal` | `PROMPT_INJECTION_SIGNAL` | 忽略指令、泄露秘密、上下文污染、外部恶意输入 |
-| `prompt_injection_action` | `PROMPT_INJECTION_TO_DANGEROUS_ACTION` | 注入后触发 shell、文件、网络等危险动作 |
-| `logic_loop` | `POSSIBLE_LOGIC_LOOP` | 高频重试、循环调用、短会话风暴、资源消耗 |
-| `short_ssl_burst` | `FREQUENT_SHORT_SSL_SESSIONS` | 短 SSL 爆发、异常重试、探测式请求 |
+| 文件与资源访问异常 | `SENSITIVE_FILE_ACCESS`、`OUT_OF_WORKSPACE_OPERATION` | `sensitive_file`、`workspace_violation` |
+| 命令与执行异常 | `UNEXPECTED_SHELL_EXEC` | `shell_exec` |
+| 提示注入异常 | `PROMPT_INJECTION_SIGNAL`、`PROMPT_INJECTION_TO_DANGEROUS_ACTION` | `prompt_injection_signal`、`prompt_injection_action` |
+| 流程与控制异常 | `POSSIBLE_LOGIC_LOOP`、`TASK_SPEC_VIOLATION`、`ROLE_SPEC_VIOLATION`、`STEP_REPETITION`、`CONTEXT_LOSS`、`TERMINATION_FAILURE` | `logic_loop`、`task_control` |
+| 网络与通信异常 | `FREQUENT_SHORT_SSL_SESSIONS` | `short_ssl_burst` |
 
-## 5. Prompt Injection 模板强化
+新增的 5 个规则没有扩成第六类，而是并入“流程与控制异常”：
 
-当前已对 Prompt Injection 两类异常做额外强化：
+- `TASK_SPEC_VIOLATION` / `ROLE_SPEC_VIOLATION` / `CONTEXT_LOSS` -> `task_control`
+- `STEP_REPETITION` / `TERMINATION_FAILURE` -> `logic_loop`
 
-- 区分“仅有可疑文本”与“已驱动危险动作”
-- 增加 `confirm_when` 与 `suppress_when` 条件
-- 强调事件链判断：
+这样既保留了规则粒度，便于 benchmark 和统计，也控制了模板数量，便于维护。
 
-```text
-文本诱导 -> 工具调用 -> 危险动作
-```
-
-这使 LLM 可以更好地区分：
-
-- 安全测试样本
-- 普通文本分析任务
-- 已经进入执行链路的真实注入攻击
-
-## 6. 输出格式
-
-LLM 返回示例：
+## 5. 输出格式
 
 ```json
 {
@@ -83,21 +61,16 @@ LLM 返回示例：
 }
 ```
 
-## 7. 当前验证结果
+## 6. 当前结论
 
-已完成的验证包括：
+- LLM 审计接入已完成。
+- 新增 5 个流程控制类规则已完成。
+- `rules.yaml`、`audit_engine.py`、设计文档已对齐。
+- `AuditEngine` 可正常返回 `llm_review` 结构化结果。
+- 黑名单事件可完成真实 LLM 二次确认。
 
-- DeepSeek API 实际调用成功
-- `AuditEngine` 可解析结构化 JSON 结果
-- 黑名单事件可触发 `LLM确认风险`
-- 返回结果中已包含 `llm_review` 字段
-- 不同规则可进入不同模板
+## 7. 后续重点
 
-## 8. 下一步工作
-
-| 方向 | 说明 |
-| --- | --- |
-| 完整链路联调 | 验证真实事件经 Redis/analyzer 后落入 SQLite。 |
-| 提示词继续细化 | 针对更多规则补充模板和判断条件。 |
-| 结果展示优化 | 将 `llm_review` 做更方便查询与展示的持久化视图。 |
-| 根因识别扩展 | 在 LLM 审计之上继续做根因总结与多事件语义缝合。 |
+- 完整链路联调：验证真实事件从 analyzer 到 SQLite 的全流程落库。
+- benchmark：对比 baseline 与当前 LLM 审计架构的误报率、命中率和解释能力。
+- 展示优化：将 `llm_review` 结果做前端可视化展示。
