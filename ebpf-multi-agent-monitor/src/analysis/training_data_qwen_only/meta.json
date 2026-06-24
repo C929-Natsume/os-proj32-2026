@@ -1,12 +1,1 @@
-{
-  "source": "qwen_only",
-  "total": 320,
-  "normal": 227,
-  "anomaly": 93,
-  "splits": {
-    "train_unlabeled": 158,
-    "train_labeled": 223,
-    "val_labeled": 48,
-    "test_labeled": 49
-  }
-}
+{"total": 3201, "normal": 1690, "anomaly": 1511, "train_labeled": 1069, "train_unlabeled": 1171, "val": 480, "test": 481}
