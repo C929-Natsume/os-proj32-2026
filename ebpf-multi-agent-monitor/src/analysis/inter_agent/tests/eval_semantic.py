@@ -16,7 +16,7 @@ from detection.semantic_detector import SemanticAnomalyDetector
 
 
 def load_data(path="training_data_qwen_only/val_labeled.json"):
-    base = os.path.join(os.path.dirname(__file__), "..", "..", path)
+    base = os.path.join(os.path.dirname(__file__), "..", "..", "..", path)
     with open(base, encoding="utf-8") as f:
         return json.load(f)
 
@@ -38,10 +38,12 @@ def evaluate(data, detector=None, threshold=0.5):
     true_pos = true_neg = false_pos = false_neg = 0
     total_api_calls = 0
     failed_calls = 0
+    by_type = {}
 
     for i, obs in enumerate(data):
         label = obs.get("label", 0)
         ground_truth = bool(label == 1)
+        anom_type = obs.get("_anomaly_type", "normal") if label == 1 else "normal"
 
         if detector is not None:
             result = detector.detect(obs)
@@ -69,10 +71,23 @@ def evaluate(data, detector=None, threshold=0.5):
         results.append({
             "idx": i,
             "label": label,
+            "anom_type": anom_type,
             "risk": round(risk, 4),
             "predicted": predicted,
             "status": status,
         })
+
+        if anom_type not in by_type:
+            by_type[anom_type] = {"total": 0, "tp": 0, "fp": 0, "tn": 0, "fn": 0}
+        by_type[anom_type]["total"] += 1
+        if ground_truth and predicted:
+            by_type[anom_type]["tp"] += 1
+        elif not ground_truth and not predicted:
+            by_type[anom_type]["tn"] += 1
+        elif not ground_truth and predicted:
+            by_type[anom_type]["fp"] += 1
+        elif ground_truth and not predicted:
+            by_type[anom_type]["fn"] += 1
 
     n = len(data)
     acc = (true_pos + true_neg) / n if n else 0
@@ -93,6 +108,7 @@ def evaluate(data, detector=None, threshold=0.5):
         "threshold": threshold,
         "api_calls": total_api_calls,
         "failed_calls": failed_calls,
+        "by_type": by_type,
         "per_sample": results,
     }
 
@@ -111,13 +127,25 @@ def print_report(stats, label="Results"):
     if stats.get("api_calls"):
         print(f"  API calls:        {stats['api_calls']}")
         print(f"  Failed calls:     {stats['failed_calls']}")
+    if stats.get("by_type"):
+        print(f"\n  Per-type breakdown:")
+        for atype, counts in sorted(stats["by_type"].items()):
+            t = counts["total"]
+            tp = counts["tp"]
+            fp = counts["fp"]
+            fn = counts["fn"]
+            prec = tp / (tp + fp) if (tp + fp) else 0
+            rec = tp / (tp + fn) if (tp + fn) else 0
+            print(f"    {atype:35s} n={t:3d}  prec={prec:.3f}  rec={rec:.3f}  tp={tp} fp={fp} fn={fn}")
     print()
 
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate semantic anomaly detection")
-    parser.add_argument("--api-url", default="", help="Qwen API base URL")
-    parser.add_argument("--model", default="qwen2.5:7b", help="Model name")
+    parser.add_argument("--api-url", default="https://api.siliconflow.cn/v1",
+                        help="Qwen API base URL")
+    parser.add_argument("--api-key", default="", help="Qwen API key")
+    parser.add_argument("--model", default="Qwen/Qwen2.5-14B-Instruct", help="Model name")
     parser.add_argument("--threshold", type=float, default=0.5, help="Decision threshold")
     parser.add_argument("--data", default="training_data_qwen_only/val_labeled.json", help="Dataset path")
     parser.add_argument("--detailed", action="store_true", help="Print per-sample details")
@@ -125,18 +153,15 @@ def main():
 
     data = load_data(args.data)
 
-    # Baseline: metrics-only detector
-    baseline = evaluate(data, detector=None, threshold=args.threshold)
-    print_report(baseline, "Baseline (metrics-only)")
-
     # Show distribution
     n_anom = sum(1 for d in data if d.get("label") == 1)
     n_norm = sum(1 for d in data if d.get("label") == 0)
     print(f"  Dataset: {len(data)} obs ({n_norm} normal, {n_anom} anomaly)")
 
     if args.api_url:
+        api_key = args.api_key or "sk-vnvjgpkafewfpaeuhfdofxeqpybbejyrkthwohdbdsrgaeaj"
         detector = SemanticAnomalyDetector(
-            api_key="",
+            api_key=api_key,
             base_url=args.api_url,
             model_name=args.model,
             window_size=3,
@@ -147,12 +172,6 @@ def main():
         sem = evaluate(data, detector=detector, threshold=args.threshold)
         print_report(sem, f"Semantic Detector ({args.model})")
 
-        # Comparison
-        print(f"  vs Baseline:")
-        print(f"    F1:    {baseline['f1']:.4f} -> {sem['f1']:.4f}  ({sem['f1'] - baseline['f1']:+.4f})")
-        print(f"    Prec:  {baseline['precision']:.4f} -> {sem['precision']:.4f}  ({sem['precision'] - baseline['precision']:+.4f})")
-        print(f"    Rec:   {baseline['recall']:.4f} -> {sem['recall']:.4f}  ({sem['recall'] - baseline['recall']:+.4f})")
-
         if args.detailed:
             print("\n=== Per-sample details ===")
             for r in sem["per_sample"]:
@@ -160,10 +179,14 @@ def main():
                 actual = "ANOM" if r["predicted"] else "norm"
                 mark = "✓" if r["label"] == 1 and r["predicted"] else \
                        "✓" if r["label"] == 0 and not r["predicted"] else "✗"
-                print(f"  [{mark}] obs#{r['idx']:3d} expected={expected} actual={actual} risk={r['risk']:.3f}")
+                print(f"  [{mark}] obs#{r['idx']:3d} anom={r.get('anom_type','?'):25s} "
+                      f"expected={expected} actual={actual} risk={r['risk']:.3f}")
     else:
-        print("\n  No --api-url provided. Semantic detector not run.")
-        print("  To run with Qwen: python -m inter_agent.tests.eval_semantic --api-url http://localhost:11434/v1")
+        # Baseline: metrics-only detector
+        baseline = evaluate(data, detector=None, threshold=args.threshold)
+        print_report(baseline, "Baseline (metrics-only)")
+        print("\n  Provide --api-url to run semantic detector.")
+        print("  Example: python -m inter_agent.tests.eval_semantic --api-url https://api.siliconflow.cn/v1")
 
 
 if __name__ == "__main__":

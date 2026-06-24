@@ -29,6 +29,132 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+try:
+    from inter_agent.data.autogen_scenarios import SEMANTIC_INJECTORS
+    _HAS_SEMANTIC = True
+except ImportError:
+    _HAS_SEMANTIC = False
+    # Inline semantic injectors for standalone VM mode
+    import random as _sem_rng
+    def _sem_rewrite(obs, target, text):
+        for msg in obs.get("messages", []):
+            if msg.get("src") == target:
+                enc = base64.b64encode(text.encode()).decode()
+                msg["data"] = enc
+                msg["data_size"] = len(enc)
+    def _sem_label(obs, target, atype, sev, risk):
+        obs["label"] = 1
+        obs["_anomaly_target"] = target
+        obs["_anomaly_type"] = atype
+        obs["anomalies"].append({"agent_id": target, "rule": atype.upper(),
+            "severity": sev, "risk_score": risk,
+            "description": f"Semantic anomaly: {atype} on {target}",
+            "timestamp_ns": obs.get("timestamp", 0)})
+    def _inj_stale(obs, aids, **kw):
+        t = _sem_rng.choice(aids)
+        _sem_rewrite(obs, t, f"Based on cached data, {t}: file unchanged")
+        obs["agents"][t]["fs_write_count"] = 8
+        obs["agents"][t]["fs_unlink_count"] = 1
+        _sem_label(obs, t, "stale_state", "MEDIUM", 0.70)
+        return obs
+    def _inj_conflict(obs, aids, **kw):
+        a, b = _sem_rng.sample(aids, 2)
+        _sem_rewrite(obs, a, "Lock acquired on /shared/data")
+        _sem_rewrite(obs, b, "Writing to /shared/data no lock")
+        for x in (a, b):
+            obs["agents"][x]["fs_write_count"] = min(obs["agents"][x].get("fs_write_count", 0) + 15, 50)
+            obs["agents"][x]["api_call_count"] = min(obs["agents"][x].get("api_call_count", 0) + 8, 60)
+        _sem_label(obs, a, "state_conflict", "HIGH", 0.80)
+        return obs
+    def _inj_partial(obs, aids, **kw):
+        t = _sem_rng.choice(aids)
+        _sem_rewrite(obs, t, "Only /tmp visible, no /etc access")
+        obs["agents"][t]["fs_open_count"] = 1
+        obs["agents"][t]["unique_files_count"] = 2
+        obs["agents"][t]["fs_read_count"] = 5
+        _sem_label(obs, t, "partial_visibility", "MEDIUM", 0.65)
+        return obs
+    def _inj_disorder(obs, aids, **kw):
+        msgs = [m for m in obs.get("messages", []) if m.get("src") in aids]
+        if len(msgs) >= 2:
+            msgs[0]["timestamp_ns"], msgs[1]["timestamp_ns"] = msgs[1]["timestamp_ns"], msgs[0]["timestamp_ns"]
+        t = msgs[0]["src"] if msgs else aids[0]
+        _sem_label(obs, t, "message_disorder", "MEDIUM", 0.60)
+        return obs
+    def _inj_timeout(obs, aids, **kw):
+        t = _sem_rng.choice(aids)
+        _sem_rewrite(obs, t, "Retrying req #3, possible timeout")
+        for k in ("api_call_count", "fs_read_count", "fs_write_count", "net_send_count"):
+            obs["agents"][t][k] = min(obs["agents"][t].get(k, 0) * 2, 100)
+        _sem_label(obs, t, "timeout_retry", "MEDIUM", 0.65)
+        return obs
+    def _inj_ignore(obs, aids, **kw):
+        a, b = _sem_rng.sample(aids, 2)
+        q = base64.b64encode(b"Query: status of task X?").decode()
+        obs.setdefault("messages", []).append({"src": a, "dst": b, "msg_type": "user",
+            "data_size": len(q), "timestamp_ns": obs.get("timestamp", 0), "data": q})
+        obs["agents"][b]["msg_received"] = obs["agents"][b].get("msg_received", 0) + 1
+        _sem_label(obs, b, "ignore_input", "MEDIUM", 0.70)
+        return obs
+    def _inj_mismatch(obs, aids, **kw):
+        t = _sem_rng.choice(aids)
+        _sem_rewrite(obs, t, "Secure file integrity check, no changes")
+        obs["agents"][t]["shell_exec_count"] = 3
+        obs["agents"][t]["sensitive_file_count"] = 2
+        obs["agents"][t]["proc_exec_count"] = 4
+        _sem_label(obs, t, "reasoning_action_mismatch", "HIGH", 0.85)
+        return obs
+    def _inj_wrong(obs, aids, **kw):
+        t = _sem_rng.choice(aids)
+        _sem_rewrite(obs, t, "Assuming network available, proceeding")
+        obs["agents"][t]["net_connect_count"] = 0
+        obs["agents"][t]["net_send_count"] = 0
+        obs["agents"][t]["net_recv_count"] = 0
+        _sem_label(obs, t, "wrong_assumption", "HIGH", 0.75)
+        return obs
+    def _inj_derail(obs, aids, **kw):
+        t = _sem_rng.choice(aids)
+        _sem_rewrite(obs, t, "Task was to process data but let me install packages")
+        obs["agents"][t]["proc_exec_count"] = 5
+        obs["agents"][t]["proc_fork_count"] = 3
+        obs["agents"][t]["fs_read_count"] = 1
+        obs["agents"][t]["api_call_count"] = min(obs["agents"][t].get("api_call_count", 0) + 20, 80)
+        _sem_label(obs, t, "task_derailment", "HIGH", 0.80)
+        return obs
+    def _inj_conceal(obs, aids, **kw):
+        t = _sem_rng.choice(aids)
+        _sem_rewrite(obs, t, "All systems normal, nothing to report")
+        obs["agents"][t]["cpu_usage"] = 0.95
+        obs["agents"][t]["memory_usage"] = 0.92
+        obs["agents"][t]["proc_fork_count"] = 12
+        obs["agents"][t]["proc_exec_count"] = 8
+        obs["agents"][t]["shell_exec_count"] = 3
+        _sem_label(obs, t, "concealment", "CRITICAL", 0.90)
+        return obs
+    def _inj_premature(obs, aids, **kw):
+        t = _sem_rng.choice(aids)
+        _sem_rewrite(obs, t, "Agree with initial assessment, no more analysis")
+        obs["agents"][t]["fs_read_count"] = 2
+        obs["agents"][t]["api_call_count"] = 1
+        obs["agents"][t]["unique_files_count"] = 1
+        _sem_label(obs, t, "premature_convergence", "LOW", 0.55)
+        return obs
+    _SEM_TYPES = ["stale_state","state_conflict","partial_visibility","message_disorder",
+        "timeout_retry","ignore_input","reasoning_action_mismatch","wrong_assumption",
+        "task_derailment","concealment","premature_convergence"]
+    _SEM_FUNS = {
+        "stale_state": _inj_stale, "state_conflict": _inj_conflict,
+        "partial_visibility": _inj_partial, "message_disorder": _inj_disorder,
+        "timeout_retry": _inj_timeout, "ignore_input": _inj_ignore,
+        "reasoning_action_mismatch": _inj_mismatch, "wrong_assumption": _inj_wrong,
+        "task_derailment": _inj_derail, "concealment": _inj_conceal,
+        "premature_convergence": _inj_premature,
+    }
+    SEMANTIC_INJECTORS = {
+        "hierarchical": {"anomaly_types": _SEM_TYPES, "injectors": _SEM_FUNS},
+        "peer-to-peer": {"anomaly_types": _SEM_TYPES, "injectors": _SEM_FUNS},
+    }
+
 API_BASE_URL = "https://api.siliconflow.cn/v1"
 API_MODEL = "Qwen/Qwen3.6-35B-A3B"
 API_KEY_ENV = "SILICONFLOW_API_KEY"
@@ -422,15 +548,17 @@ def _inject_propagation(obs: dict, agent_ids: list) -> dict:
 # ── Main entry point ────────────────────────────────────────────────────────
 
 def collect(topology: str, rounds: int = 10, inject_rate: float = 0.0,
-            output_dir: str = "autogen_captured", seed: int = 42):
+            output_dir: str = "autogen_captured", seed: int = 42,
+            semantic_rate: float = 0.0):
     """Collect AutoGen conversation observations.
 
     Args:
         topology: "hierarchical" or "peer-to-peer".
         rounds: number of conversation rounds to collect.
-        inject_rate: fraction of rounds to inject anomalies (0.0 to 1.0).
+        inject_rate: fraction of rounds to inject metric anomalies (0.0 to 1.0).
         output_dir: output directory for .jsonl files.
         seed: random seed for reproducibility.
+        semantic_rate: fraction of rounds to inject semantic anomalies (0.0 to 1.0).
     """
     import autogen
 
@@ -504,10 +632,15 @@ def collect(topology: str, rounds: int = 10, inject_rate: float = 0.0,
     topo_config = TOPOLOGY_INJECTORS[injector_key]
     anomaly_injectors = topo_config["injectors"]
 
+    sem_topo_config = SEMANTIC_INJECTORS.get(injector_key, {})
+    sem_anomaly_injectors = sem_topo_config.get("injectors", {})
+    sem_anomaly_types = sem_topo_config.get("anomaly_types", [])
+
     ts = time.strftime("%Y%m%d_%H%M%S")
     output_path = os.path.join(output_dir, f"autogen_{topology}_{ts}.jsonl")
     normal_count = 0
     anomaly_count = 0
+    semantic_anomaly_count = 0
 
     with open(output_path, "w") as f:
         for r in range(rounds):
@@ -543,10 +676,21 @@ def collect(topology: str, rounds: int = 10, inject_rate: float = 0.0,
             else:
                 normal_count += 1
 
+            # Semantic anomaly injection (independent from metric anomaly)
+            if sem_anomaly_types and random.random() < semantic_rate:
+                sem_type = random.choice(sem_anomaly_types)
+                sem_fn = sem_anomaly_injectors.get(sem_type)
+                if sem_fn:
+                    try:
+                        obs = sem_fn(obs, agent_ids, **extra_kw)
+                        semantic_anomaly_count += 1
+                    except Exception as e:
+                        logger.warning("Semantic injection %s failed: %s", sem_type, e)
+
             f.write(json.dumps(obs) + "\n")
             if (r + 1) % 5 == 0:
-                logger.info("Collected %d/%d rounds (normal=%d, anomaly=%d)",
-                            r + 1, rounds, normal_count, anomaly_count)
+                logger.info("Collected %d/%d rounds (normal=%d, anomaly=%d, semantic=%d)",
+                            r + 1, rounds, normal_count, anomaly_count, semantic_anomaly_count)
                 f.flush()
 
     # Write meta
@@ -561,12 +705,15 @@ def collect(topology: str, rounds: int = 10, inject_rate: float = 0.0,
             "normal_count": normal_count,
             "anomaly_count": anomaly_count,
             "anomaly_types": topo_config["anomaly_types"],
+            "semantic_rate": semantic_rate,
+            "semantic_anomaly_count": semantic_anomaly_count,
+            "semantic_anomaly_types": sem_anomaly_types,
             "source": f"autogen_{topology}",
             "_topology": topology,
         }, f, indent=2)
 
-    logger.info("Collection complete: %s (%d normal, %d anomaly)",
-                output_path, normal_count, anomaly_count)
+    logger.info("Collection complete: %s (%d normal, %d metric anomaly, %d semantic anomaly)",
+                output_path, normal_count, anomaly_count, semantic_anomaly_count)
     logger.info("Meta: %s", meta_path)
 
 
@@ -580,6 +727,8 @@ def main():
                         help="Number of conversation rounds")
     parser.add_argument("--inject-rate", type=float, default=0.0,
                         help="Anomaly injection rate (0.0 to 1.0)")
+    parser.add_argument("--semantic-anomaly-rate", type=float, default=0.0,
+                        help="Semantic anomaly injection rate (0.0 to 1.0)")
     parser.add_argument("--output-dir", default="autogen_captured")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
@@ -594,14 +743,16 @@ def main():
         logger.error("Check network connectivity and API key")
         sys.exit(1)
 
-    logger.info("Starting AutoGen %s collection (%d rounds, inject=%.0f%%)",
-                args.topology, args.rounds, args.inject_rate * 100)
+    logger.info("Starting AutoGen %s collection (%d rounds, inject=%.0f%%, semantic=%.0f%%)",
+                args.topology, args.rounds, args.inject_rate * 100,
+                args.semantic_anomaly_rate * 100)
     collect(
         topology=args.topology,
         rounds=args.rounds,
         inject_rate=args.inject_rate,
         output_dir=args.output_dir,
         seed=args.seed,
+        semantic_rate=args.semantic_anomaly_rate,
     )
 
 
