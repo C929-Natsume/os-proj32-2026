@@ -1,0 +1,486 @@
+======================================================
+[node] reasoning_action_mismatch (HIGH)
+risk=1.000  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Anomaly type 'reasoning_action_mismatch' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+======================================================
+[node] reasoning_action_mismatch (HIGH)
+risk=1.000  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Agent claimed safe/benign activity but metrics show shell_exec=3 and sensitive_file=0 — reasoning contradicts actual actions
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+  ... and 3 duplicate alerts suppressed
+======================================================
+[node] concealment (HIGH)
+risk=1.000  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Anomaly type 'concealment' detected in observation
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+======================================================
+[edge] flood_from_single (MEDIUM)
+risk=0.572  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+  - agent_4  message -> agent_0
+  - agent_4  message -> agent_0
+  - agent_4  message -> agent_0
+  - agent_4  message -> agent_0
+  - agent_4  message -> agent_0
+  - agent_4  message -> agent_0
+[root cause]
+  Anomaly type 'flood_from_single' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=5  edges=60
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+  ... and 4 duplicate alerts suppressed
+======================================================
+[edge] group_split (MEDIUM)
+risk=0.566  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Anomaly type 'group_split' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+  ... and 4 duplicate alerts suppressed
+======================================================
+[edge] ignore_input (MEDIUM)
+risk=0.566  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+  - agent_0  user -> agent_3  "Query: what is status of task X?"
+[semantic association]
+  sender: agent_0 -> receiver: agent_3
+  content: "Query: what is status of task X?"
+[root cause]
+  Anomaly type 'ignore_input' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+  ... and 4 duplicate alerts suppressed
+======================================================
+[edge] message_disorder (MEDIUM)
+risk=0.566  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Anomaly type 'message_disorder' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+  ... and 4 duplicate alerts suppressed
+======================================================
+[edge] message_storm (LOW)
+risk=0.497  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+  - agent_0  message -> agent_1
+  - agent_0  message -> agent_1
+  - agent_0  message -> agent_1
+  - agent_0  message -> agent_1
+  - agent_0  message -> agent_1
+  - agent_0  message -> agent_1
+[root cause]
+  Anomaly type 'message_storm' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=5  edges=40
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+  ... and 4 duplicate alerts suppressed
+======================================================
+[node] partial_visibility (MEDIUM)
+risk=0.700  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Anomaly type 'partial_visibility' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+======================================================
+[node] partial_visibility (MEDIUM)
+risk=0.700  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Agent reported limited file visibility (fs_open=1, unique_files=2), but should have had broader access
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+  ... and 3 duplicate alerts suppressed
+======================================================
+[node] premature_convergence (MEDIUM)
+risk=0.566  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Agents agreed after only 0 messages with minimal work done (api_call=1, fs_read=2) — insufficient exploration before convergence
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+======================================================
+[node] premature_convergence (MEDIUM)
+risk=0.566  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Anomaly type 'premature_convergence' detected on agent_1
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+  ... and 3 duplicate alerts suppressed
+======================================================
+[node] timeout_retry (MEDIUM)
+risk=0.700  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+  - agent_0  api_call -> agent_1
+  - agent_1  api_call -> agent_2
+  - agent_2  api_call -> agent_3
+  - agent_3  api_call -> agent_4
+[root cause]
+  Anomaly type 'timeout_retry' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=5  edges=4
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+======================================================
+[node] timeout_retry (MEDIUM)
+risk=0.700  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+  - agent_0  api_call -> agent_1
+  - agent_1  api_call -> agent_2
+  - agent_2  api_call -> agent_3
+  - agent_3  api_call -> agent_4
+[root cause]
+  Agent triggered excessive retries (api_call=45, fs_write=15) — possible duplicated operations from timeout handling
+[view]
+  topology=peer-to-peer  agents=5  edges=4
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+======================================================
+[node] timeout_retry (MEDIUM)
+risk=0.700  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+  - agent_0  api_call -> agent_1
+  - agent_1  api_call -> agent_2
+  - agent_2  api_call -> agent_3
+  - agent_3  api_call -> agent_4
+[root cause]
+  Agent triggered excessive retries (api_call=75, fs_write=15) — possible duplicated operations from timeout handling
+[view]
+  topology=peer-to-peer  agents=5  edges=4
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+======================================================
+[node] timeout_retry (MEDIUM)
+risk=0.700  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+  - agent_0  api_call -> agent_1
+  - agent_1  api_call -> agent_2
+  - agent_2  api_call -> agent_3
+  - agent_3  api_call -> agent_4
+[root cause]
+  Agent triggered excessive retries (api_call=105, fs_write=15) — possible duplicated operations from timeout handling
+[view]
+  topology=peer-to-peer  agents=5  edges=4
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+======================================================
+[node] timeout_retry (MEDIUM)
+risk=0.700  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+  - agent_0  api_call -> agent_1
+  - agent_1  api_call -> agent_2
+  - agent_2  api_call -> agent_3
+  - agent_3  api_call -> agent_4
+[root cause]
+  Agent triggered excessive retries (api_call=135, fs_write=15) — possible duplicated operations from timeout handling
+[view]
+  topology=peer-to-peer  agents=5  edges=4
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+======================================================
+[node] reasoning_action_mismatch (HIGH)
+risk=1.000  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Anomaly type 'reasoning_action_mismatch' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+======================================================
+[node] reasoning_action_mismatch (HIGH)
+risk=1.000  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Agent claimed safe/benign activity but metrics show shell_exec=3 and sensitive_file=2 — reasoning contradicts actual actions
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+  ... and 3 duplicate alerts suppressed
+======================================================
+[node] concealment (HIGH)
+risk=1.000  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Anomaly type 'concealment' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+======================================================
+[node] concealment (HIGH)
+risk=1.000  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Agent reported normal operations but cpu=0.95 and memory=0.92 are critically high — hiding resource abuse behind benign message content
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+  ... and 3 duplicate alerts suppressed
+======================================================
+[node] reasoning_action_mismatch (HIGH)
+risk=1.000  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Anomaly type 'reasoning_action_mismatch' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+======================================================
+[node] reasoning_action_mismatch (HIGH)
+risk=1.000  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Agent claimed safe/benign activity but metrics show shell_exec=3 and sensitive_file=4 — reasoning contradicts actual actions
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+  ... and 3 duplicate alerts suppressed
+======================================================
+[node] stale_state (MEDIUM)
+risk=0.610  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Anomaly type 'stale_state' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+======================================================
+[node] stale_state (MEDIUM)
+risk=0.610  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  fs_unlink=3 file deletions detected while agent was active — may indicate operating on outdated file state
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+  ... and 3 duplicate alerts suppressed
+======================================================
+[edge] state_conflict (HIGH)
+risk=0.800  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Anomaly type 'state_conflict' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+  ... and 4 duplicate alerts suppressed
+======================================================
+[node] timeout_retry (HIGH)
+risk=1.000  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Anomaly type 'timeout_retry' detected in observation
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+======================================================
+[edge] supervisor_bypass (MEDIUM)
+risk=0.566  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Anomaly type 'supervisor_bypass' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+  ... and 4 duplicate alerts suppressed
+======================================================
+[node] timeout_retry (HIGH)
+risk=0.825  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Anomaly type 'timeout_retry' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+======================================================
+[node] timeout_retry (HIGH)
+risk=0.825  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Agent triggered excessive retries (api_call=35, fs_write=15) — possible duplicated operations from timeout handling
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+  ... and 3 duplicate alerts suppressed
+======================================================
+[node] task_derailment (HIGH)
+risk=1.000  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Anomaly type 'task_derailment' detected in observation
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+======================================================
+[node] timeout_retry (MEDIUM)
+risk=0.700  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Anomaly type 'timeout_retry' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+======================================================
+[node] timeout_retry (MEDIUM)
+risk=0.700  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Agent triggered excessive retries (api_call=40, fs_write=40) — possible duplicated operations from timeout handling
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+  ... and 3 duplicate alerts suppressed
+======================================================
+[node] worker_isolated (MEDIUM)
+risk=0.566  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Anomaly type 'worker_isolated' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+  ... and 4 duplicate alerts suppressed
+======================================================
+[node] wrong_assumption (HIGH)
+risk=0.800  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Anomaly type 'wrong_assumption' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+======================================================
+[node] wrong_assumption (HIGH)
+risk=0.800  time=2026-06-27 00:41:03
+------------------------------------------------------
+[event sequence]
+[root cause]
+  Agent assumed network connectivity was available but net_connect=0 and net_send=0 — acting on false premise
+[view]
+  topology=peer-to-peer  agents=5  edges=0
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+======================================================
+
+  ... and 3 duplicate alerts suppressed

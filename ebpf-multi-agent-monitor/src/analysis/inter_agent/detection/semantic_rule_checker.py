@@ -22,13 +22,35 @@ class SemanticRuleChecker:
     @staticmethod
     def _rule_stale_state(agents: dict, messages: list, interactions: list,
                            agent_ids: List[str]) -> Dict[str, float]:
-        """fs_unlink>0: always 0 in normal, >=1 in anomaly."""
+        """fs_unlink>=3 AND message suggests data is unchanged/cached/stable."""
+        import base64
         scores = {}
         for aid in agent_ids:
             info = agents.get(aid, {})
             fs_unlink = info.get("fs_unlink_count", 0)
-            if fs_unlink >= 1:
-                scores[aid] = 0.7 + min(fs_unlink * 0.2, 0.3)
+            if fs_unlink < 3:
+                continue
+            # Check if agent's messages suggest unchanged/cached state
+            sem_hint = False
+            stale_keywords = ["unchanged", "cached", "not modified",
+                              "no change", "still the same", "data is stable"]
+            for m in messages:
+                if m.get("src") == aid:
+                    try:
+                        raw = m.get("data", "")
+                        text = base64.b64decode(raw).decode("utf-8", errors="replace").lower()
+                    except Exception:
+                        text = ""
+                    for kw in stale_keywords:
+                        if kw in text:
+                            sem_hint = True
+                            break
+                    if sem_hint:
+                        break
+            if sem_hint:
+                scores[aid] = 0.70 + min(fs_unlink * 0.03, 0.25)
+            else:
+                scores[aid] = 0.55 + min(fs_unlink * 0.02, 0.20)
         return scores
 
     @staticmethod
@@ -71,16 +93,38 @@ class SemanticRuleChecker:
     @staticmethod
     def _rule_timeout_retry(agents: dict, messages: list, interactions: list,
                              agent_ids: List[str]) -> Dict[str, float]:
-        """api>30 or fs_write>25 (normal: api=4-6, fs_write=5-20)."""
+        """api>30 or fs_write>25 AND message mentions retry/timeout."""
+        import base64
         scores = {}
         for aid in agent_ids:
             info = agents.get(aid, {})
             api = info.get("api_call_count", 0)
             fs_write = info.get("fs_write_count", 0)
-            if api > 30:
-                scores[aid] = min(1.0, 0.7 + (api - 30) / 50)
-            elif fs_write > 25:
-                scores[aid] = min(1.0, 0.7 + (fs_write - 25) / 20)
+            metric_hit = api > 30 or fs_write > 25
+            if not metric_hit:
+                continue
+            sem_hint = False
+            retry_keywords = ["retry", "timeout", "again", "re-send", "repeating"]
+            for m in messages:
+                if m.get("src") == aid:
+                    try:
+                        raw = m.get("data", "")
+                        text = base64.b64decode(raw).decode("utf-8", errors="replace").lower()
+                    except Exception:
+                        text = ""
+                    for kw in retry_keywords:
+                        if kw in text:
+                            sem_hint = True
+                            break
+                    if sem_hint:
+                        break
+            if sem_hint:
+                if api > 30:
+                    scores[aid] = min(1.0, 0.70 + (api - 30) / 50)
+                else:
+                    scores[aid] = min(1.0, 0.70 + (fs_write - 25) / 20)
+            else:
+                scores[aid] = min(0.70, 0.50 + (api - 30) / 100 + (fs_write - 25) / 50)
         return scores
 
     @staticmethod
@@ -224,6 +268,129 @@ class SemanticRuleChecker:
 
     def is_anomalous(self, obs: dict) -> bool:
         return self.check(obs)["overall_risk"] >= self._risk_threshold
+
+    def get_evidence(self, obs: dict) -> dict:
+        """Return per-agent evidence for each triggered rule."""
+        agents_data = obs.get("agents", {})
+        agent_ids = list(agents_data.keys())[:16]
+        messages = obs.get("messages", [])
+        interactions = obs.get("interactions", [])
+        evidence = {}
+        for type_name, rule_fn in self.RULES:
+            try:
+                per_agent = rule_fn(agents_data, messages, interactions, agent_ids)
+            except Exception as e:
+                logger.debug("get_evidence rule %s: %s", type_name, e)
+                per_agent = {}
+            for aid, risk in per_agent.items():
+                if risk <= 0.0:
+                    continue
+                entry = evidence.setdefault(aid, {})
+                info = agents_data.get(aid, {})
+                if type_name == "stale_state":
+                    entry[type_name] = {
+                        "fs_unlink": info.get("fs_unlink_count", 0),
+                        "fs_write": info.get("fs_write_count", 0),
+                        "risk": round(risk, 3),
+                    }
+                elif type_name == "state_conflict":
+                    entry[type_name] = {
+                        "fs_write": info.get("fs_write_count", 0),
+                        "api_call": info.get("api_call_count", 0),
+                        "conflict_with": [a for a in agent_ids if a != aid
+                                          and agents.get(a, {}).get("fs_write_count", 0) > 20],
+                        "risk": round(risk, 3),
+                    }
+                elif type_name == "partial_visibility":
+                    entry[type_name] = {
+                        "fs_open": info.get("fs_open_count", 0),
+                        "unique_files": info.get("unique_files_count", 0),
+                        "risk": round(risk, 3),
+                    }
+                elif type_name == "message_disorder":
+                    entry[type_name] = {
+                        "messages": len([m for m in messages if m.get("src") == aid]),
+                        "timestamps": [m.get("timestamp_ns", 0) for m in messages
+                                      if m.get("src") in agent_ids][:4],
+                        "risk": round(risk, 3),
+                    }
+                elif type_name == "timeout_retry":
+                    entry[type_name] = {
+                        "api_call": info.get("api_call_count", 0),
+                        "fs_write": info.get("fs_write_count", 0),
+                        "fs_read": info.get("fs_read_count", 0),
+                        "risk": round(risk, 3),
+                    }
+                elif type_name == "ignore_input":
+                    src_list = [m.get("src", "") for m in messages
+                               if m.get("dst") == aid]
+                    entry[type_name] = {
+                        "msg_received": info.get("msg_received", 0),
+                        "msg_sent": info.get("msg_sent", 0),
+                        "from_agents": src_list,
+                        "risk": round(risk, 3),
+                    }
+                elif type_name == "reasoning_action_mismatch":
+                    entry[type_name] = {
+                        "shell_exec": info.get("shell_exec_count", 0),
+                        "sensitive_file": info.get("sensitive_file_count", 0),
+                        "proc_exec": info.get("proc_exec_count", 0),
+                        "risk": round(risk, 3),
+                    }
+                elif type_name == "wrong_assumption":
+                    entry[type_name] = {
+                        "net_connect": info.get("net_connect_count", 0),
+                        "net_send": info.get("net_send_count", 0),
+                        "api_call": info.get("api_call_count", 0),
+                        "risk": round(risk, 3),
+                    }
+                elif type_name == "task_derailment":
+                    entry[type_name] = {
+                        "proc_exec": info.get("proc_exec_count", 0),
+                        "api_call": info.get("api_call_count", 0),
+                        "proc_fork": info.get("proc_fork_count", 0),
+                        "risk": round(risk, 3),
+                    }
+                elif type_name == "concealment":
+                    entry[type_name] = {
+                        "cpu": info.get("cpu_usage", 0),
+                        "memory": info.get("memory_usage", 0),
+                        "proc_fork": info.get("proc_fork_count", 0),
+                        "shell_exec": info.get("shell_exec_count", 0),
+                        "risk": round(risk, 3),
+                    }
+                elif type_name == "premature_convergence":
+                    entry[type_name] = {
+                        "api_call": info.get("api_call_count", 0),
+                        "fs_read": info.get("fs_read_count", 0),
+                        "messages": len(messages),
+                        "risk": round(risk, 3),
+                    }
+        return evidence
+
+    ROOT_CAUSE_MAP = {
+        "stale_state": "fs_unlink={fs_unlink} file deletions detected while agent was active — may indicate operating on outdated file state",
+        "state_conflict": "Agent claimed exclusive access on a shared resource, but another agent also wrote to the same resource concurrently — state inconsistency between agents",
+        "partial_visibility": "Agent reported limited file visibility (fs_open={fs_open}, unique_files={unique_files}), but should have had broader access",
+        "message_disorder": "Message order violation: a reply timestamp precedes its request timestamp — causal relationship broken",
+        "timeout_retry": "Agent triggered excessive retries (api_call={api_call}, fs_write={fs_write}) — possible duplicated operations from timeout handling",
+        "ignore_input": "Agent received incoming messages from {from_agents} but did not respond (msg_received={msg_received}, msg_sent={msg_sent}) — input ignored",
+        "reasoning_action_mismatch": "Agent claimed safe/benign activity but metrics show shell_exec={shell_exec} and sensitive_file={sensitive_file} — reasoning contradicts actual actions",
+        "wrong_assumption": "Agent assumed network connectivity was available but net_connect=0 and net_send=0 — acting on false premise",
+        "task_derailment": "Agent deviated from original task: proc_exec={proc_exec} and api_call={api_call} indicate unrelated activity instead of assigned work",
+        "concealment": "Agent reported normal operations but cpu={cpu} and memory={memory} are critically high — hiding resource abuse behind benign message content",
+        "premature_convergence": "Agents agreed after only {messages} messages with minimal work done (api_call={api_call}, fs_read={fs_read}) — insufficient exploration before convergence",
+    }
+
+    def get_root_cause(self, anom_type: str, evidence: dict) -> str:
+        """Return human-readable root cause description."""
+        if anom_type not in self.ROOT_CAUSE_MAP:
+            return f"Anomaly type '{anom_type}' detected by rule system"
+        template = self.ROOT_CAUSE_MAP[anom_type]
+        try:
+            return template.format(**evidence)
+        except KeyError:
+            return template
 
     @property
     def is_enabled(self) -> bool:

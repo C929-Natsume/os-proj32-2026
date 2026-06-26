@@ -3,7 +3,7 @@ sys.path.insert(0, r"D:\一些小程序\ebpf异常检测\project3136859-387615-m
 from detection.semantic_rule_checker import SemanticRuleChecker
 
 # Load test data
-val_path = r"D:\一些小程序\ebpf异常检测\project3136859-387615-multi\ebpf-multi-agent-monitor\src\analysis\inter_agent\training_data_qwen_only\val_labeled.json"
+val_path = r"D:\一些小程序\ebpf异常检测\project3136859-387615-multi\ebpf-multi-agent-monitor\src\analysis\inter_agent\training_data\val_labeled.json"
 with open(val_path, "r", encoding="utf-8") as f:
     data = json.load(f)
 

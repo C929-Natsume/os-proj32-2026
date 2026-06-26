@@ -438,10 +438,12 @@ def extract_edge_attr(interactions: list, aid_to_idx: dict) -> Optional[np.ndarr
 class AnomalyDetector:
     def __init__(self, node_dim=14, hidden_dim=64, latent_dim=64,
                  feature_weight=0.3, model_path=None,
-                 encoder_type="gcn", n_layers=1, variant="deterministic"):
+                 encoder_type="gcn", n_layers=1, variant="deterministic",
+                 anomaly_threshold=0.5):
         self._node_dim = node_dim
         self._latent_dim = latent_dim
         self._feature_weight = feature_weight
+        self._anomaly_threshold = anomaly_threshold
         self._model = None
         self._classifier = None
         self._loaded = False
@@ -510,8 +512,7 @@ class AnomalyDetector:
                 cls_probs = torch.sigmoid(cls_logits).numpy()
 
             final_scores = anom_scores * 0.5 + cls_probs * 0.5
-            threshold = np.percentile(final_scores, 90) if len(final_scores) > 0 and np.max(final_scores) > 0 else 0.5
-            anom_nodes = [i for i, s in enumerate(final_scores) if s > threshold]
+            anom_nodes = [i for i, s in enumerate(final_scores) if s > 0.5]
             return {
                 "anomaly_scores": final_scores,
                 "anomaly_nodes": anom_nodes,

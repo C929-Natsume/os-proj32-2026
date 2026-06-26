@@ -38,9 +38,19 @@ detection:
   temporal_risk_threshold: 0.6
 
   # Score combination weights (used when GNN model is loaded)
-  gnn_weight: 0.4
-  rule_weight: 0.4
-  temporal_weight: 0.2
+  gnn_weight: 0.35
+  rule_weight: 0.35
+  temporal_weight: 0.15
+  semantic_rule_weight: 0.15
+
+  # Anomaly decision thresholds (calibrated from evaluation)
+  anomaly_threshold: 0.3
+  semantic_rule_threshold: 0.5
+
+  # Response decision thresholds
+  response_alert: 0.3
+  response_block: 0.7
+  response_isolate: 0.9
 
   # LLM escalation
   llm_escalation_threshold: 0.7
@@ -55,24 +65,20 @@ model:
   feature_weight: 0.65
   model_path: "models/anomaly_detector.pth"
 
+# LLM / AutoGen API
+llm:
+  api_base_url: "API_URL"
+  api_key_env: "API_KEY"
+  model: "MODEL_NAME"
+
 intervention:
   enabled: true
   auto_isolate_risk: 0.8
 
-# Semantic anomaly detection (Qwen via SiliconFlow)
-semantic:
-  enabled: true
-  api_key: "sk-vnvjgpkafewfpaeuhfdofxeqpybbejyrkthwohdbdsrgaeaj"
-  base_url: "https://api.siliconflow.cn/v1"
-  model_name: "Qwen/Qwen2.5-14B-Instruct"
-  window_size: 3
-  risk_threshold: 0.5
-  timeout: 30
-  max_tokens: 1024
+# Semantic rule checker (11 MAST Section 2+3 types, no API needed)
+# Configured via detection.semantic_rule_weight and detection.semantic_rule_threshold above.
 
-# DeepSeek LLM escalation (optional)
-llm:
-  enabled: false
-  api_key: ""
-  model_name: "deepseek-chat"
-  base_url: "https://api.deepseek.com/v1"
+# Logging
+log:
+  output_dir: "../../logs/inter_log"
+

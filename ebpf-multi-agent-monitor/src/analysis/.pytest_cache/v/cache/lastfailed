@@ -1,0 +1,6 @@
+{
+  "inter_agent/tests/test_deepseek_api.py::test_api_connectivity": true,
+  "inter_agent/tests/test_integration.py::TestPipeline::test_normal_pipeline": true,
+  "inter_agent/tests/test_integration.py::TestPipeline::test_resource_anomaly": true,
+  "inter_agent/tests/test_integration.py::TestPipeline::test_gnn_model_loaded": true
+}

@@ -70,13 +70,75 @@ def run_loop():
         logger.info("Shutting down.")
 
 
+def run_live(redis_host="127.0.0.1", redis_port=6379, window_seconds=30):
+    """Real-time polling from Redis (eBPF data pipeline).
+
+    Connects to Redis, polls inter:metric:{agent_id} keys every window_seconds,
+    processes each observation through the full 5-detector pipeline,
+    and outputs alert logs.
+
+    Usage:
+        python -m inter_agent.main --live --redis-host 127.0.0.1 --window 30
+    """
+    from inter_agent.monitor.agent import MonitorAgent
+    from inter_agent.data.collector import RedisCollector
+    from inter_agent.config import load_config
+    import time
+
+    config = load_config()
+    config["llm"]["enabled"] = False
+    agent = MonitorAgent(config=config)
+
+    collector = RedisCollector(
+        host=redis_host, port=redis_port, window_seconds=window_seconds,
+    )
+    logger.info("Inter-agent live analyzer started. Polling Redis %s:%d every %ds",
+                redis_host, redis_port, window_seconds)
+
+    step = 0
+    try:
+        while True:
+            t0 = time.time()
+            try:
+                obs = collector.get_observation()
+            except Exception as e:
+                logger.warning("Redis read failed: %s", e)
+                time.sleep(window_seconds)
+                continue
+
+            if not obs.get("agents"):
+                time.sleep(window_seconds)
+                continue
+
+            report = agent.process_observation(obs)
+            step += 1
+            anom = "ALERT" if report.anomalous_nodes else "PASS"
+            logger.info("[%4d] %s risk=%.3f level=%s nodes=%s",
+                        step, anom, report.max_risk,
+                        report.response_level.value, report.anomalous_nodes)
+            dt = time.time() - t0
+            sleep = max(0, window_seconds - dt)
+            time.sleep(sleep)
+    except KeyboardInterrupt:
+        logger.info("Shutting down after %d observations.", step)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Inter-agent anomaly detection")
     parser.add_argument("--once", action="store_true", help="Single-shot detection")
     parser.add_argument("--simulate", action="store_true", help="Run with simulated data")
+    parser.add_argument("--live", action="store_true",
+                        help="Real-time Redis polling (eBPF pipeline)")
+    parser.add_argument("--redis-host", default="127.0.0.1", help="Redis host")
+    parser.add_argument("--redis-port", type=int, default=6379, help="Redis port")
+    parser.add_argument("--window", type=int, default=30,
+                        help="Polling interval in seconds")
     args = parser.parse_args()
 
-    if args.simulate:
+    if args.live:
+        run_live(redis_host=args.redis_host, redis_port=args.redis_port,
+                 window_seconds=args.window)
+    elif args.simulate:
         run_simulate()
     elif args.once:
         run_once()

@@ -1,7 +1,7 @@
 """Convert .jsonl captured data → train/val/test split JSON files.
 
 Usage:
-    python scripts/convert_jsonl_to_split.py --input-dir captured/ --output-dir training_data_qwen_only/
+    python scripts/convert_jsonl_to_split.py --input-dir autogen_captured/ --output-dir training_data/
 """
 import argparse
 import json
@@ -24,7 +24,7 @@ def main():
     parser = argparse.ArgumentParser(description="Convert .jsonl to train/val/test split")
     parser.add_argument("--input-dir", default="autogen_captured",
                         help="Directory with .jsonl files")
-    parser.add_argument("--output-dir", default="training_data_qwen_only",
+    parser.add_argument("--output-dir", default="training_data",
                         help="Output directory for split JSON files")
     parser.add_argument("--val-ratio", type=float, default=0.15,
                         help="Validation ratio")
