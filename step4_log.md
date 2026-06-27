@@ -158,4 +158,72 @@ agent=<agent_id>  ebpf=<内核侧标识>
 
 ---
 
+#### 运行方式与命令
 
+`single / interactive / all` 三种模式不是写在 `intra_agent` 子目录中，而是由总控入口 `src/analysis/main_analyzer.py` 统一调度。
+
+命令行参数定义：
+
+```text
+--mode single
+--mode interactive
+--mode all
+```
+
+对应含义：
+
+1. `single`
+- 仅开启 `intra-agent` 单体异常检测与单体审计日志链路。
+
+2. `interactive`
+- 仅开启 `inter-agent` 多智能体交互异常分析链路。
+
+3. `all`
+- 同时开启 `intra-agent` 与 `inter-agent` 两条链路。
+
+终端启动命令如下：
+
+```bash
+cd /mnt/e/os2026/ebpf-multi-agent-monitor
+python3 src/analysis/main_analyzer.py --mode single
+```
+
+```bash
+cd /mnt/e/os2026/ebpf-multi-agent-monitor
+python3 src/analysis/main_analyzer.py --mode interactive
+```
+
+```bash
+cd /mnt/e/os2026/ebpf-multi-agent-monitor
+python3 src/analysis/main_analyzer.py --mode all
+```
+
+如果需要完整展示前端中的三种流程图模式，则可在启动展示系统后，通过对话框直接输入以下命令：
+
+1. `单点模式 single intra-agent 审计链路展示`
+2. `交互模式 interactive inter-agent 交互异常展示`
+3. `全量模式 all 单点与交互联合展示`
+
+展示系统启动命令：
+
+```bash
+cd /mnt/e/os2026/ebpf-monitor-showcase
+npm run dev
+```
+
+浏览器访问：
+
+```text
+http://127.0.0.1:3000
+```
+
+---
+
+#### 结论
+
+`step4` 已经从“设计要求”推进到“可运行结果”：
+
+1. `solo` 日志链路已完成并落盘。
+2. `multi` 已具备异常归因、语义关联和全局拓扑说明能力。
+3. `main_analyzer.py` 已支持 `single / interactive / all` 三种模式切换。
+4. `CoreSight` 前端已支持通过三条展示命令触发对应流程图链路。
