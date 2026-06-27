@@ -6,8 +6,10 @@ import re
 import base64
 import redis
 import json
+import argparse
 from audit_engine import AuditEngine
 from intra_agent.main import IntraAgentAnalyzer
+from intra_agent.user_log import IntraUserLogger
 from inter_agent.main import InterAgentAnalyzer
 from sqlite_store import SQLiteStore
 from protocol_fingerprint import (
@@ -42,8 +44,9 @@ RAW_PROTO_EVENT_TYPES = {10, 11, 12, 13}
 
 
 class MainAnalyzer:
-    def __init__(self):
+    def __init__(self, mode="all"):
         print("[ANALYZER] Initializing Main Analyzer...")
+        self.mode = mode
         self.redis_client = None
         self.redis_stream_client = None
         self.pubsub = None
@@ -56,9 +59,10 @@ class MainAnalyzer:
         self.audit_engine = AuditEngine()
         self.intra_analyzer = IntraAgentAnalyzer()
         self.inter_analyzer = InterAgentAnalyzer()
+        self.intra_user_logger = IntraUserLogger()
         self.sqlite_store = SQLiteStore()
 
-        print("[ANALYZER] Main Analyzer initialized successfully")
+        print(f"[ANALYZER] Main Analyzer initialized successfully (mode={self.mode})")
 
     def connect_redis(self):
         print(f"[ANALYZER] Connecting to Redis at {REDIS_HOST}:{REDIS_PORT}...")
@@ -213,6 +217,25 @@ class MainAnalyzer:
             "details": {"source": "intra_agent"},
         }
         self._push_anomaly(payload)
+
+    def _mode_enabled(self, name):
+        if self.mode == "all":
+            return True
+        return self.mode == name
+
+    def _handle_intra_results(self, reqs, semantic_context=None):
+        if not reqs:
+            return []
+
+        results = []
+        for req in reqs:
+            self._push_intra_request(req)
+            result = self.audit_engine.audit_intra_request(req)
+            self.sqlite_store.persist_audit_result(req, result)
+            self.intra_user_logger.log_audit(req, result, semantic_context=semantic_context)
+            print(f"[ANALYZER-AUDIT] 单体审计结果: {result}")
+            results.append(result)
+        return results
 
     def _short_preview(self, text, limit=120):
         text = (text or "").replace("\r", "\\r").replace("\n", "\\n")
@@ -440,23 +463,22 @@ class MainAnalyzer:
         if 'dip' in event_data and 'dport' in event_data:
             print(f"[ANALYZER]   -> Network Target: {event_data['dip']}:{event_data['dport']}")
 
-        inter_alerts = self.inter_analyzer.run_analysis(event_data)
-        if inter_alerts:
-            print(f"[ANALYZER-INTER] 发现跨进程/关联异常: {inter_alerts}")
-            self._push_inter_alerts(inter_alerts, event_data)
+        if self._mode_enabled("interactive"):
+            inter_alerts = self.inter_analyzer.run_analysis(event_data)
+            if inter_alerts:
+                print(f"[ANALYZER-INTER] 发现跨进程/关联异常: {inter_alerts}")
+                self._push_inter_alerts(inter_alerts, event_data)
 
-        intra_reqs = self.intra_analyzer.analyze_event(event_data)
-        if not intra_reqs:
+        if not self._mode_enabled("single"):
             return []
 
-        results = []
-        for req in intra_reqs:
-            self._push_intra_request(req)
-            result = self.audit_engine.audit_intra_request(req)
-            self.sqlite_store.persist_audit_result(req, result)
-            print(f"[ANALYZER-AUDIT] 单体审计结果: {result}")
-            results.append(result)
-        return results
+        intra_reqs = self.intra_analyzer.analyze_event(event_data)
+        semantic_context = self._enrich_semantic_context(
+            event_data.get("agent_id", self._agent_id_for_pid(event_data.get("pid", 0))),
+            event_data.get("pid", 0),
+            event_data.get("timestamp", time.time_ns()),
+        )
+        return self._handle_intra_results(intra_reqs, semantic_context=semantic_context)
 
     def process_ssl_event(self, event_data):
         data_val = event_data.get('data', '')
@@ -478,10 +500,14 @@ class MainAnalyzer:
             print(f"[ANALYZER] Processing SSL event: {event_data}")
             print(f"[ANALYZER]   Event type: {event_type}, PID: {pid}, Comm: {comm}, Data length: {data_len}")
 
-        inter_alerts = self.inter_analyzer.run_analysis(event_data)
-        if inter_alerts:
-            print(f"[ANALYZER-INTER] 发现跨进程/关联异常: {inter_alerts}")
-            self._push_inter_alerts(inter_alerts, event_data)
+        if self._mode_enabled("interactive"):
+            inter_alerts = self.inter_analyzer.run_analysis(event_data)
+            if inter_alerts:
+                print(f"[ANALYZER-INTER] 发现跨进程/关联异常: {inter_alerts}")
+                self._push_inter_alerts(inter_alerts, event_data)
+
+        if not self._mode_enabled("single"):
+            return []
 
         intra_reqs = self.intra_analyzer.analyze_event(event_data)
         if not intra_reqs:
@@ -489,14 +515,12 @@ class MainAnalyzer:
                 print("[ANALYZER]   无单体审计请求")
             return []
 
-        results = []
-        for req in intra_reqs:
-            self._push_intra_request(req)
-            result = self.audit_engine.audit_intra_request(req)
-            self.sqlite_store.persist_audit_result(req, result)
-            print(f"[ANALYZER-AUDIT] SSL单体审计结果: {result}")
-            results.append(result)
-        return results
+        semantic_context = self._enrich_semantic_context(
+            event_data.get("agent_id", self._agent_id_for_pid(event_data.get("pid", 0))),
+            event_data.get("pid", 0),
+            event_data.get("timestamp", time.time_ns()),
+        )
+        return self._handle_intra_results(intra_reqs, semantic_context=semantic_context)
 
     def process_raw_proto_event(self, event_data):
         """处理纯文本协议事件 (MCP stdio / A2A / ACP / ANP TCP)，含帧解析与字段提取"""
@@ -594,23 +618,25 @@ class MainAnalyzer:
                 event_data['_dids'] = dids
                 print(f"[ANALYZER]   ANP DIDs: {dids[:5]}")
 
-        inter_alerts = self.inter_analyzer.run_analysis(event_data)
-        if inter_alerts:
-            print(f"[ANALYZER-INTER] 发现跨进程/关联异常: {inter_alerts}")
-            self._push_inter_alerts(inter_alerts, event_data)
+        if self._mode_enabled("interactive"):
+            inter_alerts = self.inter_analyzer.run_analysis(event_data)
+            if inter_alerts:
+                print(f"[ANALYZER-INTER] 发现跨进程/关联异常: {inter_alerts}")
+                self._push_inter_alerts(inter_alerts, event_data)
+
+        if not self._mode_enabled("single"):
+            return []
 
         intra_reqs = self.intra_analyzer.analyze_event(event_data)
         if not intra_reqs:
             return []
 
-        results = []
-        for req in intra_reqs:
-            self._push_intra_request(req)
-            result = self.audit_engine.audit_intra_request(req)
-            self.sqlite_store.persist_audit_result(req, result)
-            print(f"[ANALYZER-AUDIT] 协议审计结果: {result}")
-            results.append(result)
-        return results
+        semantic_context = self._enrich_semantic_context(
+            event_data.get("agent_id", self._agent_id_for_pid(event_data.get("pid", 0))),
+            event_data.get("pid", 0),
+            event_data.get("timestamp", time.time_ns()),
+        )
+        return self._handle_intra_results(intra_reqs, semantic_context=semantic_context)
 
     @staticmethod
     def _fingerprint_protocol(event_data):
@@ -696,5 +722,14 @@ if __name__ == "__main__":
     print("[ANALYZER] eBPF Multi-Agent Monitor - Main Analyzer")
     print("=" * 60)
 
-    analyzer = MainAnalyzer()
+    parser = argparse.ArgumentParser(description="Audit analyzer entry")
+    parser.add_argument(
+        "--mode",
+        choices=["single", "interactive", "all"],
+        default="all",
+        help="single=仅单点/intra，interactive=仅交互/inter，all=两者都开",
+    )
+    args = parser.parse_args()
+
+    analyzer = MainAnalyzer(mode=args.mode)
     analyzer.run()

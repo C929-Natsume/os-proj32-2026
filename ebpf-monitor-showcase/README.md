@@ -1,6 +1,6 @@
-# eBPF 多智能体监控展示系统
+# CoreSight
 
-这是一个用于展示 eBPF 多智能体监控项目的独立 Next.js 展示系统。
+CoreSight 是一个用于展示 eBPF 多智能体监控项目的独立 Next.js 展示系统。
 
 ## 项目用途
 
@@ -57,6 +57,11 @@ npm install
 cd /mnt/e/os2026/ebpf-monitor-showcase
 npm run dev
 ```
+
+说明：
+
+- 默认 `dev` 已启用轮询监听，适合 `/mnt/e/...` 这类挂载目录，代码修改后刷新页面即可看到更新。
+- 这次改完脚本后，需要先手动重启一次 `npm run dev`，之后才会按新的热重载方式工作。
 
 浏览器访问：
 

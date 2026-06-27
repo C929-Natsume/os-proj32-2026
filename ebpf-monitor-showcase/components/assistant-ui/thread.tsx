@@ -25,6 +25,7 @@ import {
   UserMessageAttachments,
 } from "@/components/assistant-ui/attachment";
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
+import { FlowMessage } from "@/components/assistant-ui/flow-message";
 import { Reasoning, ReasoningGroup } from "@/components/assistant-ui/reasoning";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
@@ -66,7 +67,6 @@ export const Thread: FC = () => {
             <ThreadPrimitive.If empty={false}>
               <div className="aui-thread-viewport-spacer min-h-8 grow" />
             </ThreadPrimitive.If>
-            <Composer />
           </ThreadPrimitive.Viewport>
         </ThreadPrimitive.Root>
       </MotionConfig>
@@ -92,7 +92,7 @@ const ThreadWelcome: FC = () => {
   return (
     <ThreadPrimitive.Empty>
       <div className="aui-thread-welcome-root mx-auto my-auto flex w-full max-w-[var(--thread-max-width)] flex-grow flex-col">
-        <div className="aui-thread-welcome-center flex w-full flex-grow flex-col items-center justify-center">
+        <div className="aui-thread-welcome-center flex w-full flex-grow flex-col items-center justify-center gap-8">
           <div className="aui-thread-welcome-message flex size-full flex-col justify-center items-center px-8 text-center">
             <m.div
               initial={{ opacity: 0, y: 10 }}
@@ -120,15 +120,73 @@ const ThreadWelcome: FC = () => {
               请选择模型或查看审计结果，系统将展示真实监控链路数据。
             </m.div>
           </div>
+          <div className="w-full px-4">
+            <ThreadModeOptions />
+          </div>
+          <div className="w-full px-4">
+            <ThreadWelcomeSuggestions />
+          </div>
         </div>
       </div>
     </ThreadPrimitive.Empty>
   );
 };
 
+const ThreadModeOptions: FC = () => {
+  return (
+    <div className="space-y-3">
+      <div className="px-1 text-xs font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+        功能模式
+      </div>
+      <div className="grid w-full gap-2 @md:grid-cols-3">
+        {[
+          {
+            title: "单点模式",
+            label: "仅展示 intra-agent 单体异常检测与审计日志链路",
+            action: "单点模式 single intra-agent 审计链路展示",
+          },
+          {
+            title: "交互模式",
+            label: "仅展示 inter-agent 多智能体交互异常分析链路",
+            action: "交互模式 interactive inter-agent 交互异常展示",
+          },
+          {
+            title: "全量模式",
+            label: "同时展示 single 与 interactive 的完整链路视图",
+            action: "全量模式 all 单点与交互联合展示",
+          },
+        ].map((mode, index) => (
+          <m.div
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 18 }}
+            transition={{ delay: 0.03 * index }}
+            key={`mode-${mode.title}`}
+          >
+            <ThreadPrimitive.Suggestion prompt={mode.action} method="replace" autoSend asChild>
+              <Button
+                variant="ghost"
+                className="h-auto w-full flex-1 flex-wrap items-start justify-start gap-1 rounded-3xl border border-slate-300/80 bg-slate-50/75 px-5 py-4 text-left text-sm @md:flex-col dark:hover:bg-accent/60"
+                aria-label={mode.action}
+              >
+                <span className="font-medium">{mode.title}</span>
+                <span className="text-muted-foreground">{mode.label}</span>
+              </Button>
+            </ThreadPrimitive.Suggestion>
+          </m.div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const ThreadWelcomeSuggestions: FC = () => {
   return (
-    <div className="aui-thread-welcome-suggestions grid w-full gap-2 @md:grid-cols-2">
+    <div className="space-y-3">
+      <div className="px-1 text-xs font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+        示例链路
+      </div>
+      <div className="aui-thread-welcome-suggestions grid w-full gap-2 @md:grid-cols-2">
       {[
         {
           title: "敏感文件访问",
@@ -180,6 +238,7 @@ const ThreadWelcomeSuggestions: FC = () => {
           </ThreadPrimitive.Suggestion>
         </m.div>
       ))}
+      </div>
     </div>
   );
 };
@@ -266,7 +325,7 @@ const AssistantMessage: FC = () => {
         <div className="aui-assistant-message-content mx-2 leading-7 break-words text-foreground">
           <MessagePrimitive.Parts
             components={{
-              Text: MarkdownText,
+              Text: FlowMessage,
               Reasoning: Reasoning,
               ReasoningGroup: ReasoningGroup,
               tools: { Fallback: ToolFallback },
@@ -275,7 +334,7 @@ const AssistantMessage: FC = () => {
           <MessageError />
         </div>
 
-        <div className="aui-assistant-message-footer mt-2 ml-2 flex">
+        <div className="aui-assistant-message-footer mt-4 ml-2 flex">
           <BranchPicker />
           <AssistantActionBar />
         </div>

@@ -13,7 +13,7 @@ const body = DM_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "eBPF Multi-Agent Monitor Showcase",
+  title: "CoreSight",
   description:
     "Competition showcase for an eBPF-based multi-agent runtime monitor with correlation analysis and LLM auditing.",
 };

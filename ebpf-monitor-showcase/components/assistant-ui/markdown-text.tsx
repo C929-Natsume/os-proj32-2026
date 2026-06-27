@@ -16,6 +16,7 @@ import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button
 import { cn } from "@/lib/utils";
 import { runCode, type RunResult } from "./sql-runner";
 import { RunDialog } from "./run-dialog";
+import type { ReactNode } from "react";
 
 const MarkdownTextImpl = () => {
   return (
@@ -28,6 +29,21 @@ const MarkdownTextImpl = () => {
 };
 
 export const MarkdownText = memo(MarkdownTextImpl);
+
+function extractNodeText(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") {
+    return String(node);
+  }
+  if (Array.isArray(node)) {
+    return node.map(extractNodeText).join("");
+  }
+  if (!node || typeof node !== "object") {
+    return "";
+  }
+
+  const candidate = node as { props?: { children?: ReactNode } };
+  return extractNodeText(candidate.props?.children);
+}
 
 const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
   const { isCopied, copyToClipboard } = useCopyToClipboard();
@@ -189,6 +205,35 @@ const defaultComponents = memoizeMarkdownComponents({
       {...props}
     />
   ),
+  li: ({ className, children, ...props }) => {
+    const contentText = extractNodeText(children).trim();
+    const startsWithStepText = /^第?\d+步[:：]/.test(contentText);
+
+    if (!startsWithStepText) {
+      return (
+        <li className={cn("aui-md-li", className)} {...props}>
+          {children}
+        </li>
+      );
+    }
+
+    return (
+      <li
+        className={cn(
+          "aui-md-li list-none",
+          "rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 shadow-[0_8px_24px_rgba(15,23,42,0.05)]",
+          "relative mb-5",
+          "after:absolute after:left-1/2 after:top-full after:mt-1 after:-translate-x-1/2 after:text-slate-400 after:content-['↓'] last:after:hidden",
+          className,
+        )}
+        {...props}
+      >
+        <div className="[&>p]:my-0 [&>p]:leading-7 [&>ul]:my-3 [&>ul]:ml-5 [&>ol]:my-3 [&>ol]:ml-5">
+          {children}
+        </div>
+      </li>
+    );
+  },
   hr: ({ className, ...props }) => (
     <hr className={cn("aui-md-hr my-5 border-b", className)} {...props} />
   ),
@@ -260,4 +305,3 @@ const defaultComponents = memoizeMarkdownComponents({
   },
   CodeHeader,
 });
-

@@ -82,26 +82,19 @@ export function toAssistantUIResponse(backendStream: ReadableStream<Uint8Array>)
   let buffer = '';
   let currentBackendStep: number | null = null;
   let currentStepIndex = -1;
-  let stepActive = false;
   let reasoningStarted = false;
   let lastReasoning = '';
-  let textStarted = false;
 
   function reasoningId() {
     return `reasoning-${currentStepIndex}`;
   }
   function textId() {
-    return `txt-${currentStepIndex}`;
+    return 'text-main';
   }
 
-  function closeStep(controller: TransformStreamDefaultController<Uint8Array>) {
-    if (!stepActive) return;
+  function closeReasoning(controller: TransformStreamDefaultController<Uint8Array>) {
     if (reasoningStarted) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'reasoning-end', id: reasoningId() })}\n\n`));
-    if (textStarted) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'text-end', id: textId() })}\n\n`));
-    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'finish-step' })}\n\n`));
-    stepActive = false;
     reasoningStarted = false;
-    textStarted = false;
     lastReasoning = '';
   }
 
@@ -121,12 +114,12 @@ export function toAssistantUIResponse(backendStream: ReadableStream<Uint8Array>)
 
   function processObj(obj: BackendEvent, controller: TransformStreamDefaultController<Uint8Array>) {
     const backendStep = obj?.metadata && typeof obj.metadata.langgraph_step === 'number' ? (obj.metadata.langgraph_step as number) : null;
-    if (!stepActive || (backendStep !== null && backendStep !== currentBackendStep)) {
-      closeStep(controller);
+    if (backendStep !== null && backendStep !== currentBackendStep) {
+      closeReasoning(controller);
       currentStepIndex += 1;
       currentBackendStep = backendStep;
-      stepActive = true;
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'start-step' })}\n\n`));
+    } else if (currentStepIndex < 0) {
+      currentStepIndex = 0;
     }
 
     if (typeof obj?.reasoning_content === 'string') {
@@ -149,10 +142,6 @@ export function toAssistantUIResponse(backendStream: ReadableStream<Uint8Array>)
     }
 
     if (obj?.type === 'AIMessageChunk' && typeof obj?.content === 'string' && obj.content) {
-      if (!textStarted) {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'text-start', id: textId() })}\n\n`));
-        textStarted = true;
-      }
       controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'text-delta', id: textId(), delta: obj.content })}\n\n`));
     }
   }
@@ -160,6 +149,8 @@ export function toAssistantUIResponse(backendStream: ReadableStream<Uint8Array>)
   const uiTransform = new TransformStream<Uint8Array, Uint8Array>({
     start(controller) {
       controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'start' })}\n\n`));
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'start-step' })}\n\n`));
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'text-start', id: textId() })}\n\n`));
     },
     transform(chunk, controller) {
       buffer += decoder.decode(chunk, { stream: true });
@@ -187,7 +178,9 @@ export function toAssistantUIResponse(backendStream: ReadableStream<Uint8Array>)
           }
         }
       }
-      closeStep(controller);
+      closeReasoning(controller);
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'text-end', id: textId() })}\n\n`));
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'finish-step' })}\n\n`));
       controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'finish', finishReason: 'stop' })}\n\n`));
       controller.enqueue(encoder.encode('data: [DONE]\n\n'));
     },
