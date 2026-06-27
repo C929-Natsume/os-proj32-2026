@@ -1,4 +1,6 @@
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { count, getMonitorRoot, getSqlitePath, loadAppConfig, readJsonRows, row, rows } from './monitorStore';
 import {
   createDatabase,
@@ -17,9 +19,133 @@ import {
 } from './showcaseConfig';
 
 type AnyRecord = Record<string, any>;
+type IntraLogEntry = {
+  anomaly_type: string;
+  risk_level: string;
+  time: string;
+  pid: number | null;
+  tid: number | null;
+  agent_id: string;
+  comm: string;
+  object: string;
+  event_sequence: string[];
+  semantic_association: string[];
+  root_cause: string;
+  analysis_report: string;
+  evidence: string[];
+  source_file: string;
+};
 
 function normalizeString(v: any, fallback = '') {
   return typeof v === 'string' && v.trim() ? v : fallback;
+}
+
+function tryNumber(v: string) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseKeyValueLine(line: string) {
+  const out: Record<string, string> = {};
+  const normalized = line.replace(/\s{2,}/g, ' ').trim();
+  for (const token of normalized.split(' ')) {
+    const idx = token.indexOf('=');
+    if (idx <= 0) continue;
+    out[token.slice(0, idx)] = token.slice(idx + 1);
+  }
+  return out;
+}
+
+function latestFiles(dir: string, limit = 5) {
+  try {
+    return fs
+      .readdirSync(dir)
+      .filter((name) => /^anomaly_\d{8}_\d{6}\.log$/.test(name))
+      .sort((a, b) => b.localeCompare(a))
+      .slice(0, limit)
+      .map((name) => path.join(dir, name));
+  } catch {
+    return [] as string[];
+  }
+}
+
+function splitLogBlocks(text: string) {
+  const normalized = text.replace(/\r/g, '');
+  return normalized
+    .split(/={30,}\n/)
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .map((block) => (block.endsWith('=') ? block.replace(/\n=+$/, '').trim() : block));
+}
+
+function parseIntraBlock(block: string, sourceFile: string): IntraLogEntry | null {
+  const lines = block
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+  if (!lines.length) return null;
+
+  const header = lines[0]?.trim() || '';
+  const headerMatch = header.match(/^\[(?:solo|node)\]\s+(.+?)\s+\(([^)]+)\)$/);
+  if (!headerMatch) return null;
+
+  const metaLine = lines[1] || '';
+  const infoLine = lines[2] || '';
+  const meta = parseKeyValueLine(metaLine);
+  const info = parseKeyValueLine(infoLine);
+
+  const sections: Record<string, string[]> = {};
+  let currentSection = '';
+  for (const line of lines.slice(3)) {
+    if (/^-{10,}$/.test(line)) continue;
+    const sectionMatch = line.match(/^\[(.+)\]$/);
+    if (sectionMatch) {
+      currentSection = sectionMatch[1].trim().toLowerCase();
+      sections[currentSection] = [];
+      continue;
+    }
+    if (currentSection) {
+      sections[currentSection].push(line.trim());
+    }
+  }
+
+  const eventSequence = (sections['event sequence'] || []).map((line) => line.replace(/^-\s*/, '').replace(/^\s*-\s*/, '').trim());
+  const semanticAssociation = (sections['semantic association'] || []).map((line) => line.replace(/^-\s*/, '').trim());
+  const evidence = (sections['evidence'] || []).map((line) => line.replace(/^-\s*/, '').trim());
+
+  return {
+    anomaly_type: headerMatch[1].trim(),
+    risk_level: headerMatch[2].trim(),
+    time: meta.time || '-',
+    pid: tryNumber(meta.pid || ''),
+    tid: tryNumber(meta.tid || ''),
+    agent_id: info.agent || meta.agent || '-',
+    comm: info.comm || '-',
+    object: info.object || '-',
+    event_sequence: eventSequence,
+    semantic_association: semanticAssociation,
+    root_cause: (sections['root cause'] || []).join(' ').trim(),
+    analysis_report: (sections['analysis report'] || sections['view'] || []).join(' ').trim(),
+    evidence,
+    source_file: sourceFile,
+  };
+}
+
+export function readLatestIntraLogEntry() {
+  const dir = path.join(getMonitorRoot(), 'logs', 'intra_agent');
+  for (const file of latestFiles(dir, 5)) {
+    try {
+      const text = fs.readFileSync(file, 'utf8');
+      const blocks = splitLogBlocks(text);
+      for (let i = blocks.length - 1; i >= 0; i -= 1) {
+        const entry = parseIntraBlock(blocks[i] || '', path.basename(file));
+        if (entry) return entry;
+      }
+    } catch {
+      // ignore malformed log files and continue scanning older files
+    }
+  }
+  return null;
 }
 
 function inferClass(rule = '', severity = '') {

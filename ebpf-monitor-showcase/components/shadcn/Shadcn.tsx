@@ -10,8 +10,6 @@ import icon from "@/public/favicon/icon.svg";
 import { Sheet, SheetContent, SheetTrigger } from "../ui/sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { ModelPicker } from "./ModelPicker";
-import { DatabasePicker } from "./DatabasePicker";
-import { SchemaPicker } from "./SchemaPicker";
 import { ThreadList } from "@/components/assistant-ui/thread-list";
 
 type ButtonWithTooltipProps = ComponentPropsWithRef<typeof Button> & {
@@ -46,7 +44,7 @@ const TopLeft: FC = () => {
         alt="logo"
         className="inline size-4 dark:hue-rotate-180 dark:invert"
       />
-      <span>assistant-ui</span>
+      <span>CoreSight</span>
     </div>
   );
 };
@@ -80,8 +78,6 @@ const Header: FC = () => {
       <div className="flex items-center gap-5">
         <LeftBarSheet />
         <ModelPicker />
-        <DatabasePicker />
-        <SchemaPicker />
       </div>
       <ButtonWithTooltip
         variant="outline"

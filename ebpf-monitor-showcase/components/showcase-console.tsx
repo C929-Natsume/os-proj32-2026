@@ -27,6 +27,13 @@ type ModelInfo = {
   status: string;
 };
 
+type RawModelInfo = {
+  id: number | string;
+  model?: string;
+  model_name?: string;
+  base_url?: string;
+};
+
 type Overview = {
   metrics: {
     events: number;
@@ -106,7 +113,7 @@ export function ShowcaseConsole() {
   const [error, setError] = useState<string | null>(null);
 
   const fetchJson = async <T,>(path: string): Promise<T> => {
-    const res = await fetch(`http://127.0.0.1:8001${path}`, { cache: "no-store" });
+    const res = await fetch(path, { cache: "no-store" });
     if (!res.ok) {
       throw new Error(`${path} -> ${res.status}`);
     }
@@ -119,20 +126,25 @@ export function ShowcaseConsole() {
     try {
       const [healthRes, modelsRes, overviewRes, eventsRes, anomaliesRes, auditsRes] = await Promise.all([
         fetchJson<Health>("/api/health"),
-        fetchJson<{ items: ModelInfo[] }>("/api/models"),
+        fetchJson<{ models: RawModelInfo[] }>("/api/models"),
         fetchJson<Overview>("/api/overview"),
-        fetchJson<{ items: EventItem[] }>("/api/events?limit=12"),
-        fetchJson<{ items: AnomalyItem[] }>("/api/anomalies?limit=8"),
-        fetchJson<{ items: AuditItem[] }>("/api/audit-results?limit=8"),
+        fetchJson<{ events: EventItem[] }>("/api/events?limit=12"),
+        fetchJson<{ anomalies: AnomalyItem[] }>("/api/anomalies?limit=8"),
+        fetchJson<{ audit_results: AuditItem[] }>("/api/audit-results?limit=8"),
       ]);
+      const normalizedModels = modelsRes.models.map((item) => ({
+        id: String(item.model ?? item.id),
+        label: item.model_name ?? item.model ?? String(item.id),
+        status: item.base_url ? "configured" : "local",
+      }));
       setHealth(healthRes);
-      setModels(modelsRes.items);
+      setModels(normalizedModels);
       setOverview(overviewRes);
-      setEvents(eventsRes.items);
-      setAnomalies(anomaliesRes.items);
-      setAudits(auditsRes.items);
-      if (modelsRes.items.length && !modelsRes.items.find((item) => item.id === selectedModel)) {
-        setSelectedModel(modelsRes.items[0].id);
+      setEvents(eventsRes.events);
+      setAnomalies(anomaliesRes.anomalies);
+      setAudits(auditsRes.audit_results);
+      if (normalizedModels.length && !normalizedModels.find((item) => item.id === selectedModel)) {
+        setSelectedModel(normalizedModels[0].id);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

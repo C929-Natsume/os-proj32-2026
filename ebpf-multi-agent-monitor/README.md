@@ -181,6 +181,7 @@ make clean      # 清理
 2. 根据事件类型分发到不同处理函数
 3. 调用 `AuditEngine` 进行审计
 4. 捕获 KeyboardInterrupt 退出
+5. 通过 `--mode single|interactive|all` 选择仅单点、仅交互或全部分析
 
 打印示例：
 ```
@@ -190,6 +191,13 @@ make clean      # 清理
 [ANALYZER] Received event: {'type': 1, 'pid': 1234, 'comm': 'ls'}
 [ANALYZER] Processing system event: {...}
 [ANALYZER]   Audit result: {'status': 'allowed', 'reason': 'whitelist_match'}
+```
+
+运行示例：
+```bash
+PYTHONUNBUFFERED=1 ./.venv/bin/python src/analysis/main_analyzer.py --mode single
+PYTHONUNBUFFERED=1 ./.venv/bin/python src/analysis/main_analyzer.py --mode interactive
+PYTHONUNBUFFERED=1 ./.venv/bin/python src/analysis/main_analyzer.py --mode all
 ```
 
 #### audit_engine.py
@@ -213,6 +221,7 @@ make clean      # 清理
 单智能体行为分析：
 - 跟踪每个 PID 的 exec_count、file_count、network_count
 - 检测异常：高频率 exec、文件访问、网络连接
+- 命中异常后结合审计结果生成用户友好日志，并写入 `logs/intra_agent/`
 
 打印示例：
 ```
