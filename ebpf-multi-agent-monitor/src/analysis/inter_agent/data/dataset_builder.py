@@ -86,17 +86,16 @@ def build_simulator_dataset(
     n_train, n_val, n_test = n[:int(len(n) * 0.7)], n[int(len(n) * 0.7):int(len(n) * 0.84)], n[int(len(n) * 0.84):]
     a_train, a_val, a_test = a[:int(len(a) * 0.3)], a[int(len(a) * 0.3):int(len(a) * 0.5)], a[int(len(a) * 0.5):]
 
-    def _shuffle(lst):
-        rng.shuffle(lst)
-        return lst
-
     # Unlabeled — normal only for DOMINANT pre-training
     _save_json(os.path.join(output_dir, "train_unlabeled.json"), n_train)
 
     # Labeled — normal + anomaly for semi-supervised fine-tuning
-    _save_json(os.path.join(output_dir, "train_labeled.json"), _shuffle(n_train + a_train))
-    _save_json(os.path.join(output_dir, "val_labeled.json"), _shuffle(n_val + a_val))
-    _save_json(os.path.join(output_dir, "test_labeled.json"), _shuffle(n_test + a_test))
+    train_data = n_train + a_train; rng.shuffle(train_data)
+    val_data = n_val + a_val; rng.shuffle(val_data)
+    test_data = n_test + a_test; rng.shuffle(test_data)
+    _save_json(os.path.join(output_dir, "train_labeled.json"), train_data)
+    _save_json(os.path.join(output_dir, "val_labeled.json"), val_data)
+    _save_json(os.path.join(output_dir, "test_labeled.json"), test_data)
 
     meta = {
         "num_agents": num_agents,
@@ -181,14 +180,13 @@ def build_topology_dataset(
     n_train, n_val, n_test = n[:int(len(n) * 0.7)], n[int(len(n) * 0.7):int(len(n) * 0.84)], n[int(len(n) * 0.84):]
     a_train, a_val, a_test = a[:int(len(a) * 0.3)], a[int(len(a) * 0.3):int(len(a) * 0.5)], a[int(len(a) * 0.5):]
 
-    def _shuffle(lst):
-        rng.shuffle(lst)
-        return lst
-
+    train_data = n_train + a_train; rng.shuffle(train_data)
+    val_data = n_val + a_val; rng.shuffle(val_data)
+    test_data = n_test + a_test; rng.shuffle(test_data)
     _save_json(os.path.join(output_dir, "train_unlabeled.json"), n_train)
-    _save_json(os.path.join(output_dir, "train_labeled.json"), _shuffle(n_train + a_train))
-    _save_json(os.path.join(output_dir, "val_labeled.json"), _shuffle(n_val + a_val))
-    _save_json(os.path.join(output_dir, "test_labeled.json"), _shuffle(n_test + a_test))
+    _save_json(os.path.join(output_dir, "train_labeled.json"), train_data)
+    _save_json(os.path.join(output_dir, "val_labeled.json"), val_data)
+    _save_json(os.path.join(output_dir, "test_labeled.json"), test_data)
 
     meta = {
         "num_agents": scenario.num_agents,
@@ -266,18 +264,14 @@ def build_real_dataset(
     a_val_obs = anomaly_obs[a_train_count:a_train_count + a_val_count]
     a_test_obs = anomaly_obs[a_train_count + a_val_count:]
 
-    def _shuffle(lst):
-        rng.shuffle(lst)
-        return lst
-
     os.makedirs(output_dir, exist_ok=True)
+    train_data = n_train_obs + a_train_obs; rng.shuffle(train_data)
+    val_data = n_val_obs + a_val_obs; rng.shuffle(val_data)
+    test_data = n_test_obs + a_test_obs; rng.shuffle(test_data)
     _save_json(os.path.join(output_dir, "train_unlabeled.json"), n_train_obs)
-    _save_json(os.path.join(output_dir, "train_labeled.json"),
-               _shuffle(n_train_obs + a_train_obs))
-    _save_json(os.path.join(output_dir, "val_labeled.json"),
-               _shuffle(n_val_obs + a_val_obs))
-    _save_json(os.path.join(output_dir, "test_labeled.json"),
-               _shuffle(n_test_obs + a_test_obs))
+    _save_json(os.path.join(output_dir, "train_labeled.json"), train_data)
+    _save_json(os.path.join(output_dir, "val_labeled.json"), val_data)
+    _save_json(os.path.join(output_dir, "test_labeled.json"), test_data)
 
     meta = {
         "source": "real_ebpf",

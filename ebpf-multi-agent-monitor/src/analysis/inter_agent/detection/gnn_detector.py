@@ -14,9 +14,10 @@ except ImportError:
 
 def build_adjacency_matrix(num_nodes, edge_index):
     """Build dense adjacency matrix from edge_index with self-loops.
-
     Returns [N, N] tensor with 1.0 where edge exists or on diagonal, 0 elsewhere.
     """
+    if not HAS_TORCH:
+        raise RuntimeError("PyTorch not available")
     adj = torch.eye(num_nodes, device=edge_index.device, dtype=torch.float)
     if edge_index.size(1) > 0:
         adj[edge_index[0], edge_index[1]] = 1.0
@@ -155,8 +156,8 @@ if HAS_TORCH:
             super().__init__()
             self.variant = variant
             self.feature_weight = feature_weight
-            self.struct_weight = struct_weight if struct_weight is not None else (1.0 - feature_weight - 0.2)
             self.edge_weight = edge_weight
+            self.struct_weight = struct_weight if struct_weight is not None else (1.0 - feature_weight - edge_weight)
             self.edge_dim = edge_dim
 
             EncoderClass = ENCODER_REGISTRY.get(encoder_type, GCNEncoder)
@@ -347,100 +348,25 @@ else:
             raise RuntimeError("PyTorch not available")
 
 
-# ── Feature extraction ──────────────────────────────────────────────────────
+# ── Feature extraction (delegated to data.features) ────────────────────────
 
-def extract_features(agents_data: Dict[str, dict], agent_ids: list,
-                     interactions: list = None) -> np.ndarray:
-    """Extract node features: 14-dim (no content) or 14+content_dim (with content)."""
-    from inter_agent.data.text_encoder import DEFAULT_CONTENT_DIM
-    content_dim = DEFAULT_CONTENT_DIM
-    use_content = interactions is not None
-    dim = 14 + (content_dim if use_content else 0)
-    x = np.zeros((n := len(agent_ids), dim), dtype=np.float32)
-
-    content_feats = {}
-    if use_content:
-        from inter_agent.data.text_encoder import ContentFeatureExtractor
-        content_feats = ContentFeatureExtractor().extract(agents_data, agent_ids, interactions)
-
-    for i, aid in enumerate(agent_ids):
-        info = agents_data.get(aid, {})
-        cpu = float(info.get("cpu_usage", 0))
-        mem = float(info.get("memory_usage", 0))
-        api = float(info.get("api_call_count", 0))
-        msg_s = float(info.get("msg_sent", 0))
-        msg_r = float(info.get("msg_received", 0))
-        msg = msg_s + msg_r
-        shell = float(info.get("shell_exec_count", 0))
-        sensitive = float(info.get("sensitive_file_count", 0))
-        fs_r = float(info.get("fs_read_count", 0))
-        fs_w = float(info.get("fs_write_count", 0))
-        io_total = fs_r + fs_w
-        uf = float(info.get("unique_files_count", 0))
-        fs_open = float(info.get("fs_open_count", 0))
-        proc_exec = float(info.get("proc_exec_count", 0))
-        net_conn = float(info.get("net_connect_count", 0))
-
-        # Magnitude features (8 dims)
-        x[i, 0] = min(cpu, 1.0)
-        x[i, 1] = min(mem, 1.0)
-        x[i, 2] = min(api / 100.0, 1.0)
-        x[i, 3] = min(msg / 100.0, 1.0)
-        x[i, 4] = min(shell, 1.0)
-        x[i, 5] = min(sensitive, 1.0)
-        x[i, 6] = min(io_total / 200.0, 1.0)
-        x[i, 7] = min(uf / 10.0, 1.0)
-
-        # Ratio features (6 dims)
-        x[i, 8] = min(msg / (api + 1.0), 2.0) / 2.0
-        x[i, 9] = min(io_total / (fs_open + 1.0), 5.0) / 5.0
-        x[i,10] = min(shell / (proc_exec + 1.0), 1.0)
-        x[i,11] = min(sensitive / (fs_open + 1.0), 1.0)
-        x[i,12] = abs(msg_s - msg_r) / (msg + 1.0)
-        net_total = net_conn + msg
-        x[i,13] = min(net_total / (fs_open + proc_exec + 1.0), 3.0) / 3.0
-
-        if aid in content_feats:
-            cf = content_feats[aid]
-            for k in range(min(len(cf), content_dim)):
-                x[i, 14 + k] = min(float(cf[k]), 1.0)
-    return x
+from inter_agent.data.features import (
+    extract_node_features as extract_features,
+    extract_edge_attributes as extract_edge_attr,
+)
 
 
-def extract_edge_attr(interactions: list, aid_to_idx: dict) -> Optional[np.ndarray]:
-    """Extract 6-dim edge attributes: [type_onehot(3), weight, data_size_norm, msg_count_norm].
-
-    Returns None if no edges.
-    """
-    type_map = {"message": 0, "api_call": 1, "file_share": 2, "bypass": 1}
-    if not interactions:
-        return None
-    attrs = []
-    for e in interactions:
-        i = aid_to_idx.get(e["src"])
-        j = aid_to_idx.get(e["dst"])
-        if i is None or j is None:
-            continue
-        t = type_map.get(e.get("type", "message"), 0)
-        w = float(e.get("weight", 0.5))
-        ds = float(e.get("data_size", 0)) / 8192.0
-        mc = float(e.get("msg_count", 0)) / 100.0
-        onehot = [0.0, 0.0, 0.0]
-        onehot[t] = 1.0
-        attrs.append(onehot + [w, min(ds, 1.0), min(mc, 1.0)])
-    if not attrs:
-        return None
-    return np.array(attrs, dtype=np.float32)
+from inter_agent.data.features import NODE_FEATURE_DIM, EDGE_FEATURE_DIM
 
 
 # ── AnomalyDetector ─────────────────────────────────────────────────────────
 
 class AnomalyDetector:
-    def __init__(self, node_dim=14, hidden_dim=64, latent_dim=64,
+    def __init__(self, node_dim=None, hidden_dim=64, latent_dim=64,
                  feature_weight=0.3, model_path=None,
                  encoder_type="gcn", n_layers=1, variant="deterministic",
                  anomaly_threshold=0.5):
-        self._node_dim = node_dim
+        self._node_dim = node_dim if node_dim is not None else NODE_FEATURE_DIM
         self._latent_dim = latent_dim
         self._feature_weight = feature_weight
         self._anomaly_threshold = anomaly_threshold
@@ -452,7 +378,7 @@ class AnomalyDetector:
             self._model = DOMINANT(
                 node_dim, hidden_dim, latent_dim, feature_weight,
                 encoder_type=encoder_type, n_layers=n_layers,
-                variant=variant, edge_dim=6,
+                variant=variant, edge_dim=EDGE_FEATURE_DIM,
             )
             self._classifier = AnomalyClassifier(latent_dim)
             if model_path and os.path.isfile(model_path):
@@ -522,6 +448,8 @@ class AnomalyDetector:
                 "graph_score": float(final_scores.max()) if len(final_scores) > 0 else 0.0,
             }
         except Exception as e:
+            import logging
+            logging.getLogger(__name__).exception("GNN detect() failed: %s", e)
             scores = np.zeros(x.shape[0])
             return {"anomaly_scores": scores, "anomaly_nodes": [], "recon_error": 0.0,
                     "edge_error": 0.0, "cls_probability": [], "graph_score": 0.0}

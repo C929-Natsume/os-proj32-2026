@@ -67,9 +67,9 @@ model:
 
 # LLM / AutoGen API
 llm:
-  api_base_url: "API_URL"
-  api_key_env: "API_KEY"
-  model: "MODEL_NAME"
+  api_base_url: "https://api.example.com/v1"
+  api_key: "sk-your-api-key-here"
+  model: "your-model-name"
 
 intervention:
   enabled: true

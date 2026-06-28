@@ -1,14 +1,32 @@
 """Semantic anomaly rule checker — 11 MAST Section 2+3 types via metric/message patterns.
-
-No LLM API needed. Each rule is a pure structural check (O(1) per observation).
-Scores are 0.0-1.0 indicating how strongly the rule matches.
-Thresholds calibrated against data: normal metric ranges from val_labeled.json.
+No LLM API needed. Each rule is a purely structural check (O(1) per observation).
 """
 
+import base64
 import logging
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Callable
 
 logger = logging.getLogger(__name__)
+
+
+def _decode_msg_text(raw: str) -> str:
+    """Decode base64 message data, returning lowercased text or empty on failure."""
+    try:
+        return base64.b64decode(raw).decode("utf-8", errors="replace").lower()
+    except Exception:
+        return ""
+
+
+def _has_keyword_in_messages(messages: list, aid: str, keywords: list) -> bool:
+    """Check if any message from ''aid'' contains one of ''keywords''."""
+    for m in messages:
+        if m.get("src") == aid:
+            raw = m.get("data", "")
+            text = _decode_msg_text(raw)
+            for kw in keywords:
+                if kw in text:
+                    return True
+    return False
 
 
 class SemanticRuleChecker:
@@ -22,31 +40,22 @@ class SemanticRuleChecker:
     @staticmethod
     def _rule_stale_state(agents: dict, messages: list, interactions: list,
                            agent_ids: List[str]) -> Dict[str, float]:
-        """fs_unlink>=3 AND message suggests data is unchanged/cached/stable."""
-        import base64
+        """fs_unlink>=2 or zero-activity agent (cpu=0, mem=0, api=0)."""
         scores = {}
+        stale_keywords = ["unchanged", "cached", "not modified",
+                          "no change", "still the same", "data is stable"]
         for aid in agent_ids:
             info = agents.get(aid, {})
             fs_unlink = info.get("fs_unlink_count", 0)
-            if fs_unlink < 3:
+            cpu = info.get("cpu_usage", 0.5)
+            mem = info.get("memory_usage", 0.5)
+            api = info.get("api_call_count", 5)
+            if cpu == 0 and mem == 0 and api == 0:
+                scores[aid] = 0.55
                 continue
-            # Check if agent's messages suggest unchanged/cached state
-            sem_hint = False
-            stale_keywords = ["unchanged", "cached", "not modified",
-                              "no change", "still the same", "data is stable"]
-            for m in messages:
-                if m.get("src") == aid:
-                    try:
-                        raw = m.get("data", "")
-                        text = base64.b64decode(raw).decode("utf-8", errors="replace").lower()
-                    except Exception:
-                        text = ""
-                    for kw in stale_keywords:
-                        if kw in text:
-                            sem_hint = True
-                            break
-                    if sem_hint:
-                        break
+            if fs_unlink < 2:
+                continue
+            sem_hint = _has_keyword_in_messages(messages, aid, stale_keywords)
             if sem_hint:
                 scores[aid] = 0.70 + min(fs_unlink * 0.03, 0.25)
             else:
@@ -78,65 +87,69 @@ class SemanticRuleChecker:
 
     @staticmethod
     def _rule_message_disorder(agents: dict, messages: list, interactions: list,
-                                agent_ids: List[str]) -> Dict[str, float]:
-        """Reply timestamp < request timestamp."""
+                                 agent_ids: List[str]) -> Dict[str, float]:
+        """Reply timestamp < request timestamp, or identical timestamps with different content."""
         scores = {}
         msgs = [m for m in messages if m.get("src") in agent_ids]
         for i in range(len(msgs) - 1):
             t1 = msgs[i].get("timestamp_ns", 0)
             t2 = msgs[i + 1].get("timestamp_ns", 0)
+            # Strict inversion: later message has earlier timestamp
             if t1 > t2 and t1 > 0 and t2 > 0:
                 scores[msgs[i].get("src", "")] = 0.6
                 scores[msgs[i + 1].get("src", "")] = 0.6
+            # Same timestamp but different content suggests incorrect ordering
+            elif t1 == t2 and t1 > 0:
+                c1 = msgs[i].get("content", "")
+                c2 = msgs[i + 1].get("content", "")
+                if c1 != c2:
+                    scores[msgs[i].get("src", "")] = 0.5
+                    scores[msgs[i + 1].get("src", "")] = 0.5
         return scores
 
     @staticmethod
     def _rule_timeout_retry(agents: dict, messages: list, interactions: list,
-                             agent_ids: List[str]) -> Dict[str, float]:
-        """api>30 or fs_write>25 AND message mentions retry/timeout."""
-        import base64
+                              agent_ids: List[str]) -> Dict[str, float]:
+        """api>30 or fs_write>25 (original), or net_send>=30 + message mentions retry/timeout."""
         scores = {}
+        retry_keywords = ["retry", "timeout", "again", "re-send", "repeating"]
         for aid in agent_ids:
             info = agents.get(aid, {})
             api = info.get("api_call_count", 0)
             fs_write = info.get("fs_write_count", 0)
-            metric_hit = api > 30 or fs_write > 25
+            net_send = info.get("net_send_count", 0)
+            metric_hit = api > 30 or fs_write > 25 or net_send >= 30
             if not metric_hit:
                 continue
-            sem_hint = False
-            retry_keywords = ["retry", "timeout", "again", "re-send", "repeating"]
-            for m in messages:
-                if m.get("src") == aid:
-                    try:
-                        raw = m.get("data", "")
-                        text = base64.b64decode(raw).decode("utf-8", errors="replace").lower()
-                    except Exception:
-                        text = ""
-                    for kw in retry_keywords:
-                        if kw in text:
-                            sem_hint = True
-                            break
-                    if sem_hint:
-                        break
+            sem_hint = _has_keyword_in_messages(messages, aid, retry_keywords)
             if sem_hint:
+                score_val = 0.70
                 if api > 30:
-                    scores[aid] = min(1.0, 0.70 + (api - 30) / 50)
-                else:
-                    scores[aid] = min(1.0, 0.70 + (fs_write - 25) / 20)
+                    score_val += (api - 30) / 50
+                if fs_write > 25:
+                    score_val += (fs_write - 25) / 40
+                scores[aid] = min(1.0, score_val)
             else:
-                scores[aid] = min(0.70, 0.50 + (api - 30) / 100 + (fs_write - 25) / 50)
+                score_val = 0.55 if net_send >= 30 else 0.50
+                if api > 30:
+                    score_val += (api - 30) / 100
+                if fs_write > 25:
+                    score_val += (fs_write - 25) / 50
+                scores[aid] = min(0.70, score_val)
         return scores
 
     @staticmethod
     def _rule_ignore_input(agents: dict, messages: list, interactions: list,
-                            agent_ids: List[str]) -> Dict[str, float]:
-        """msg_received >= msg_sent+1 AND has incoming message."""
+                             agent_ids: List[str]) -> Dict[str, float]:
+        """msg_received >= msg_sent+1 AND has incoming message (or all agents if no messages)."""
         scores = {}
         targeted = set()
         for m in messages:
             dst = m.get("dst", "")
             if dst in agent_ids:
                 targeted.add(dst)
+        if not targeted:
+            targeted = set(agent_ids)
         for aid in targeted:
             info = agents.get(aid, {})
             received = info.get("msg_received", 0)
@@ -213,9 +226,86 @@ class SemanticRuleChecker:
                 scores[aid] = 0.55
         return scores
 
+    @staticmethod
+    def _rule_supervisor_bypass(agents: dict, messages: list, interactions: list,
+                                  agent_ids: List[str]) -> Dict[str, float]:
+        """Agent-agent bypass edges (type=bypass) between worker agents."""
+        aid_set = set(agent_ids)
+        for it in interactions:
+            src = it.get("src", "")
+            dst = it.get("dst", "")
+            if src in aid_set and dst in aid_set and it.get("type") == "bypass":
+                return {agent_ids[0]: 0.8}
+        return {}
+
+    @staticmethod
+    def _rule_group_split(agents: dict, messages: list, interactions: list,
+                           agent_ids: List[str]) -> Dict[str, float]:
+        """Cross-group agent-to-agent edges with low weight (group fragmentation)."""
+        if len(agent_ids) < 2:
+            return {}
+        mid = max(1, len(agent_ids) // 2)
+        group_a = set(agent_ids[:mid])
+        group_b = set(agent_ids[mid:])
+        cross_count = 0
+        cross_weight_sum = 0.0
+        for it in interactions:
+            src = it.get("src", "")
+            dst = it.get("dst", "")
+            if (src in group_a and dst in group_b) or (src in group_b and dst in group_a):
+                cross_count += 1
+                cross_weight_sum += it.get("weight", 0.5)
+        min_cross = 3 if len(agent_ids) >= 6 else 1
+        if cross_count < min_cross:
+            return {}
+        avg_w = cross_weight_sum / cross_count
+        if avg_w < 0.3:
+            return {agent_ids[0]: min(0.70, 0.40 + 0.04 * cross_count),
+                    agent_ids[mid]: min(0.70, 0.40 + 0.04 * cross_count)}
+        return {}
+
+    @staticmethod
+    def _rule_flood_from_single(agents: dict, messages: list, interactions: list,
+                                 agent_ids: List[str]) -> Dict[str, float]:
+        """Single source sends to 3+ distinct targets in interactions or messages."""
+        src_dsts = {}
+        for it in interactions:
+            src = it.get("src", "")
+            dst = it.get("dst", "")
+            if src in agent_ids:
+                src_dsts.setdefault(src, set()).add(dst)
+        for m in messages:
+            src = m.get("src", "")
+            dst = m.get("dst", "")
+            if src in agent_ids:
+                src_dsts.setdefault(src, set()).add(dst)
+        for src, dsts in src_dsts.items():
+            threshold = 3 if len(agent_ids) >= 6 else (2 if len(agent_ids) >= 3 else 99)
+            if len(dsts) >= threshold:
+                return {src: min(0.75, 0.45 + 0.06 * len(dsts))}
+        return {}
+
+    @staticmethod
+    def _rule_message_storm(agents: dict, messages: list, interactions: list,
+                             agent_ids: List[str]) -> Dict[str, float]:
+        """Agent with high msg_received and many incoming interactions."""
+        incoming = {}
+        for it in interactions:
+            dst = it.get("dst", "")
+            if dst in agent_ids:
+                incoming[dst] = incoming.get(dst, 0) + 1
+        for aid in agent_ids:
+            info = agents.get(aid, {})
+            recv = info.get("msg_received", 0)
+            inc = incoming.get(aid, 0)
+            if recv >= 30 and inc >= 5:
+                score = min(0.80, 0.45 + 0.01 * recv)
+                return {aid: score}
+        return {}
+
     # ── Rule registry ──
 
-    RULES: List[Tuple[str, callable]] = [
+    RULES: List[Tuple[str, Callable[..., Dict[str, float]]]] = [
         ("stale_state",             _rule_stale_state.__func__),
         ("state_conflict",          _rule_state_conflict.__func__),
         ("partial_visibility",      _rule_partial_visibility.__func__),
@@ -227,6 +317,10 @@ class SemanticRuleChecker:
         ("task_derailment",         _rule_task_derailment.__func__),
         ("concealment",             _rule_concealment.__func__),
         ("premature_convergence",   _rule_premature_convergence.__func__),
+        ("supervisor_bypass",       _rule_supervisor_bypass.__func__),
+        ("group_split",             _rule_group_split.__func__),
+        ("flood_from_single",       _rule_flood_from_single.__func__),
+        ("message_storm",           _rule_message_storm.__func__),
     ]
 
     # ── Public API ──
@@ -251,7 +345,7 @@ class SemanticRuleChecker:
                 logger.warning("Rule %s raised: %s", type_name, e)
                 per_agent = {}
             for aid, risk in per_agent.items():
-                if risk <= 0.0:
+                if risk <= 0.0 or aid not in agent_ids:
                     continue
                 all_agent_scores[aid] = max(all_agent_scores.get(aid, 0.0), risk)
                 types_found.setdefault(type_name, {})[aid] = risk
@@ -276,96 +370,82 @@ class SemanticRuleChecker:
         messages = obs.get("messages", [])
         interactions = obs.get("interactions", [])
         evidence = {}
+
+        # Data-driven evidence field extractors keyed by type_name
+        agent_set = set(agent_ids)
+        evidence_spec = {
+            "stale_state": lambda info: {
+                "fs_unlink": info.get("fs_unlink_count", 0),
+                "fs_write": info.get("fs_write_count", 0)},
+            "state_conflict": lambda info: {
+                "fs_write": info.get("fs_write_count", 0),
+                "api_call": info.get("api_call_count", 0),
+                "conflict_with": [a for a in agent_ids if a != aid
+                                  and agents_data.get(a, {}).get("fs_write_count", 0) > 20]},
+            "partial_visibility": lambda info: {
+                "fs_open": info.get("fs_open_count", 0),
+                "unique_files": info.get("unique_files_count", 0)},
+            "message_disorder": lambda info: {
+                "messages": len([m for m in messages if m.get("src") == aid]),
+                "timestamps": [m.get("timestamp_ns", 0) for m in messages
+                              if m.get("src") in agent_ids][:4]},
+            "timeout_retry": lambda info: {
+                "api_call": info.get("api_call_count", 0),
+                "fs_write": info.get("fs_write_count", 0),
+                "fs_read": info.get("fs_read_count", 0)},
+            "ignore_input": lambda info: {
+                "msg_received": info.get("msg_received", 0),
+                "msg_sent": info.get("msg_sent", 0),
+                "from_agents": [m.get("src", "") for m in messages if m.get("dst") == aid]},
+            "reasoning_action_mismatch": lambda info: {
+                "shell_exec": info.get("shell_exec_count", 0),
+                "sensitive_file": info.get("sensitive_file_count", 0),
+                "proc_exec": info.get("proc_exec_count", 0)},
+            "wrong_assumption": lambda info: {
+                "net_connect": info.get("net_connect_count", 0),
+                "net_send": info.get("net_send_count", 0),
+                "api_call": info.get("api_call_count", 0)},
+            "task_derailment": lambda info: {
+                "proc_exec": info.get("proc_exec_count", 0),
+                "api_call": info.get("api_call_count", 0),
+                "proc_fork": info.get("proc_fork_count", 0)},
+            "concealment": lambda info: {
+                "cpu": info.get("cpu_usage", 0),
+                "memory": info.get("memory_usage", 0),
+                "proc_fork": info.get("proc_fork_count", 0),
+                "shell_exec": info.get("shell_exec_count", 0)},
+            "premature_convergence": lambda info: {
+                "api_call": info.get("api_call_count", 0),
+                "fs_read": info.get("fs_read_count", 0),
+                "messages": len(messages)},
+            "supervisor_bypass": lambda info: {
+                "bypass_edges": [{"src": x.get("src"), "dst": x.get("dst"),
+                                  "weight": x.get("weight")}
+                                for x in interactions
+                                if x.get("src") in agent_set and x.get("dst") in agent_set
+                                and x.get("type") == "bypass"]},
+            "group_split": lambda info: {"interactions": len(interactions)},
+            "flood_from_single": lambda info: {"interactions": len(interactions)},
+            "message_storm": lambda info: {"msg_received": info.get("msg_received", 0)},
+        }
+
         for type_name, rule_fn in self.RULES:
             try:
                 per_agent = rule_fn(agents_data, messages, interactions, agent_ids)
             except Exception as e:
                 logger.debug("get_evidence rule %s: %s", type_name, e)
                 per_agent = {}
+            extract = evidence_spec.get(type_name)
+            if extract is None:
+                continue
             for aid, risk in per_agent.items():
                 if risk <= 0.0:
                     continue
                 entry = evidence.setdefault(aid, {})
                 info = agents_data.get(aid, {})
-                if type_name == "stale_state":
-                    entry[type_name] = {
-                        "fs_unlink": info.get("fs_unlink_count", 0),
-                        "fs_write": info.get("fs_write_count", 0),
-                        "risk": round(risk, 3),
-                    }
-                elif type_name == "state_conflict":
-                    entry[type_name] = {
-                        "fs_write": info.get("fs_write_count", 0),
-                        "api_call": info.get("api_call_count", 0),
-                        "conflict_with": [a for a in agent_ids if a != aid
-                                          and agents.get(a, {}).get("fs_write_count", 0) > 20],
-                        "risk": round(risk, 3),
-                    }
-                elif type_name == "partial_visibility":
-                    entry[type_name] = {
-                        "fs_open": info.get("fs_open_count", 0),
-                        "unique_files": info.get("unique_files_count", 0),
-                        "risk": round(risk, 3),
-                    }
-                elif type_name == "message_disorder":
-                    entry[type_name] = {
-                        "messages": len([m for m in messages if m.get("src") == aid]),
-                        "timestamps": [m.get("timestamp_ns", 0) for m in messages
-                                      if m.get("src") in agent_ids][:4],
-                        "risk": round(risk, 3),
-                    }
-                elif type_name == "timeout_retry":
-                    entry[type_name] = {
-                        "api_call": info.get("api_call_count", 0),
-                        "fs_write": info.get("fs_write_count", 0),
-                        "fs_read": info.get("fs_read_count", 0),
-                        "risk": round(risk, 3),
-                    }
-                elif type_name == "ignore_input":
-                    src_list = [m.get("src", "") for m in messages
-                               if m.get("dst") == aid]
-                    entry[type_name] = {
-                        "msg_received": info.get("msg_received", 0),
-                        "msg_sent": info.get("msg_sent", 0),
-                        "from_agents": src_list,
-                        "risk": round(risk, 3),
-                    }
-                elif type_name == "reasoning_action_mismatch":
-                    entry[type_name] = {
-                        "shell_exec": info.get("shell_exec_count", 0),
-                        "sensitive_file": info.get("sensitive_file_count", 0),
-                        "proc_exec": info.get("proc_exec_count", 0),
-                        "risk": round(risk, 3),
-                    }
-                elif type_name == "wrong_assumption":
-                    entry[type_name] = {
-                        "net_connect": info.get("net_connect_count", 0),
-                        "net_send": info.get("net_send_count", 0),
-                        "api_call": info.get("api_call_count", 0),
-                        "risk": round(risk, 3),
-                    }
-                elif type_name == "task_derailment":
-                    entry[type_name] = {
-                        "proc_exec": info.get("proc_exec_count", 0),
-                        "api_call": info.get("api_call_count", 0),
-                        "proc_fork": info.get("proc_fork_count", 0),
-                        "risk": round(risk, 3),
-                    }
-                elif type_name == "concealment":
-                    entry[type_name] = {
-                        "cpu": info.get("cpu_usage", 0),
-                        "memory": info.get("memory_usage", 0),
-                        "proc_fork": info.get("proc_fork_count", 0),
-                        "shell_exec": info.get("shell_exec_count", 0),
-                        "risk": round(risk, 3),
-                    }
-                elif type_name == "premature_convergence":
-                    entry[type_name] = {
-                        "api_call": info.get("api_call_count", 0),
-                        "fs_read": info.get("fs_read_count", 0),
-                        "messages": len(messages),
-                        "risk": round(risk, 3),
-                    }
+                fields = extract(info)
+                fields["risk"] = round(risk, 3)
+                entry[type_name] = fields
         return evidence
 
     ROOT_CAUSE_MAP = {
@@ -380,6 +460,10 @@ class SemanticRuleChecker:
         "task_derailment": "Agent deviated from original task: proc_exec={proc_exec} and api_call={api_call} indicate unrelated activity instead of assigned work",
         "concealment": "Agent reported normal operations but cpu={cpu} and memory={memory} are critically high — hiding resource abuse behind benign message content",
         "premature_convergence": "Agents agreed after only {messages} messages with minimal work done (api_call={api_call}, fs_read={fs_read}) — insufficient exploration before convergence",
+        "supervisor_bypass": "Workers communicated directly with each other via bypass-type edges instead of routing through the supervisor — supervisor bypass detected",
+        "group_split": "Agents split into subgroups with cross-group communication at low weights — group fragmentation detected",
+        "flood_from_single": "Single agent sent interactions to 3+ distinct targets — flood from single source detected",
+        "message_storm": "Agent received excessive messages (msg_received={msg_received}) — message storm detected",
     }
 
     def get_root_cause(self, anom_type: str, evidence: dict) -> str:

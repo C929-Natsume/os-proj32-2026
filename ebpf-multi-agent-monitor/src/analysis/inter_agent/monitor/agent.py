@@ -1,24 +1,45 @@
-import logging
-import json
 import base64
+import logging
 import os
+import re
+from collections import deque
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, field
 
+from inter_agent.config import load_config
 from inter_agent.graph.builder import AgentInteractionGraph
-from inter_agent.graph.feature_extractor import FeatureExtractor
-from inter_agent.graph.utterance_graph import UtteranceGraph
 from inter_agent.detection.gnn_detector import AnomalyDetector, RuleBasedDetector, extract_features
 from inter_agent.detection.temporal_detector import TemporalAnomalyDetector
 from inter_agent.detection.message_detector import MessageAnomalyDetector
 from inter_agent.detection.propagation_analyzer import PropagationPathAnalyzer
 from inter_agent.detection.semantic_rule_checker import SemanticRuleChecker
+from inter_agent.data.features import NODE_FEATURE_DIM
 from inter_agent.intervention.topology import TopologyIntervention
 
 
 logger = logging.getLogger(__name__)
+
+# ── Named constants ──────────────────────────────────────────────
+HISTORY_MAXLEN = 100
+MAX_EVENT_TEXT_LEN = 80
+BIN_PREVIEW_LEN = 24
+MIN_ALPHA_CHECK = 20
+RAW_PREVIEW_LEN = 40
+MIN_SEMANTIC_TEXT_LEN = 10
+MAX_SEMANTIC_CONTENT_LEN = 200
+MAX_AGENTS_TO_LIST = 8
+SEVERITY_HIGH_THRESHOLD = 0.8
+SEVERITY_MEDIUM_THRESHOLD = 0.5
+LINE_SEPARATOR_LEN = 54
+MAX_EVENTS_DISPLAY = 6
+DETAIL_TRUNCATE_LEN = 40
+MAX_CONTENT_TRUNCATE_LEN = 160
+SUPPLEMENTAL_SEVERITY_RISK = 1.0
+SCORE_BOOST_FACTOR = 0.8
+DEFAULT_ANOMALY_RISK = 0.3
+# ─────────────────────────────────────────────────────────────────
 
 
 class ResponseLevel(Enum):
@@ -79,12 +100,10 @@ class MonitorAgent:
         self._interaction_graph = AgentInteractionGraph(
             max_agents=cfg.get("agents", {}).get("max_agents", 16)
         )
-        self._utterance_graph = UtteranceGraph()
-        self._feature_extractor = FeatureExtractor()
         self._rule_detector = RuleBasedDetector(detect_cfg)
         model_cfg = cfg.get("model", {})
         self._gnn_detector = AnomalyDetector(
-            node_dim=model_cfg.get("node_dim", 14),
+            node_dim=model_cfg.get("node_dim", NODE_FEATURE_DIM),
             hidden_dim=model_cfg.get("hidden_dim", 64),
             latent_dim=model_cfg.get("latent_dim", 64),
             feature_weight=model_cfg.get("feature_weight", 0.3),
@@ -112,14 +131,8 @@ class MonitorAgent:
             risk_threshold=self._semantic_threshold)
         self._semantic_rule_weight = detect_cfg.get("semantic_rule_weight", 0.15)
 
-        
-        self._gnn_weight = detect_cfg.get("gnn_weight", 0.35)
-        self._rule_weight = detect_cfg.get("rule_weight", 0.35)
-        self._temporal_weight = detect_cfg.get("temporal_weight", 0.15)
-
-        self._history: List[dict] = []
+        self._history: deque = deque(maxlen=HISTORY_MAXLEN)
         self._last_report: Optional[AnomalyReport] = None
-        self._consecutive_anomaly_steps: Dict[str, int] = {}
         self._log_dir = cfg.get("log", {}).get("output_dir", None)
         self._session_log_file = None
         self._logged_supplemental_types: set = set()
@@ -128,7 +141,6 @@ class MonitorAgent:
         ts = obs.get("timestamp", 0)
 
         self._interaction_graph.update_from_observation(obs)
-        self._utterance_graph.update_from_observation(obs)
 
         self._temporal_detector.update(obs)
         self._message_detector.update_baseline(obs)
@@ -198,6 +210,10 @@ class MonitorAgent:
             if current_rank < alert_rank:
                 response = ResponseLevel.ALERT
                 max_risk = max(max_risk, sem_risk)
+            sem_agents = semantic_rule_result.get("agents", {})
+            for aid, risk in sem_agents.items():
+                if risk > 0 and aid not in anomalous_nodes:
+                    anomalous_nodes.append(aid)
 
         report = AnomalyReport(
             timestamp_ns=ts,
@@ -263,36 +279,35 @@ class MonitorAgent:
         gnn_scores_list = gnn_result.get("anomaly_scores", [])
         sem_scores = semantic_rule_result.get("agents", {}) if semantic_rule_result else {}
 
+        w_g = self._detect_cfg.get("gnn_weight", 0.35)
+        w_r = self._detect_cfg.get("rule_weight", 0.35)
+        w_t = self._detect_cfg.get("temporal_weight", 0.15)
+        w_s = self._detect_cfg.get("semantic_rule_weight", 0.15)
+
         for i, aid in enumerate(agent_ids):
             r = rule_scores.get(aid, 0.0)
             t = temporal_scores.get(aid, 0.0)
             g = float(gnn_scores_list[i]) if i < len(gnn_scores_list) else 0.0
             s = sem_scores.get(aid, 0.0)
-            intra = self._get_intra_anomaly_risk(aid)
-            scores[aid] = min(max(r, t, g, s, intra), 1.0)
+            weighted = w_r * r + w_g * g + w_t * t + w_s * s
+            max_score = max(r, g, t, s)
+            scores[aid] = min(max(weighted, max_score * SCORE_BOOST_FACTOR), 1.0)
 
         for anom in message_result.get("anomalies", []):
             a_type = anom.get("type", "")
             src = anom.get("src", "")
             dst = anom.get("dst", "")
-            risk = float(anom.get("risk", 0.3))
+            risk = float(anom.get("risk", DEFAULT_ANOMALY_RISK))
             if src in scores:
                 scores[src] = min(max(scores[src], risk), 1.0)
             if dst in scores:
-                scores[dst] = min(max(scores[dst], risk * 0.8), 1.0)
+                scores[dst] = min(max(scores[dst], risk * SCORE_BOOST_FACTOR), 1.0)
             if a_type == "cascade_storm" and dst in scores:
                 scores[dst] = min(max(scores[dst], risk), 1.0)
             if a_type == "intra_agent_alert" and src in scores:
                 scores[src] = min(max(scores[src], risk), 1.0)
 
         return scores
-
-    def _get_intra_anomaly_risk(self, agent_id: str) -> float:
-        if agent_id in self._consecutive_anomaly_steps:
-            steps = self._consecutive_anomaly_steps[agent_id]
-            if steps > 2:
-                return min(0.1 * (steps - 2), 0.5)
-        return 0.0
 
     def _identify_anomalies(self, combined_scores, gnn_result,
                             temporal_result, agent_ids):
@@ -390,16 +405,14 @@ class MonitorAgent:
         }
 
     def generate_report(self) -> AnomalyReport:
+        if self._last_report is None:
+            return AnomalyReport()
         return self._last_report
 
     def reset_state(self):
         self._interaction_graph.clear()
-        self._utterance_graph.clear()
         self._temporal_detector.clear()
-        self._message_detector._baseline.clear()
-        self._message_detector._baseline_size.clear()
-        self._message_detector._baseline_samples = 0
-        self._consecutive_anomaly_steps.clear()
+        self._message_detector.clear()
 
     # ── Log formatting (human-readable) ─────────────────────────────────
 
@@ -436,13 +449,14 @@ class MonitorAgent:
                 try:
                     raw = m.get("data", "")
                     try:
-                        text = base64.b64decode(raw).decode("utf-8")[:80]
+                        text = base64.b64decode(raw).decode("utf-8")[:MAX_EVENT_TEXT_LEN]
                     except UnicodeDecodeError:
-                        text = f"[bin:{raw[:24]}...]"
-                    if not text or not any(c.isalpha() for c in text[:20]):
-                        text = (raw[:40] + "...") if raw else "..."
+                        text = f"[bin:{raw[:BIN_PREVIEW_LEN]}...]"
+                    if not text or not any(c.isalpha() for c in text[:MIN_ALPHA_CHECK]):
+                        text = (raw[:RAW_PREVIEW_LEN] + "...") if raw else "..."
                 except Exception:
-                    text = (raw[:40] + "...") if raw else "..."
+                    logger.exception("decode msg data")
+                    text = (raw[:RAW_PREVIEW_LEN] + "...") if raw else "..."
                 events.append({
                     "ts": m.get("timestamp_ns", 0),
                     "agent": src,
@@ -476,12 +490,13 @@ class MonitorAgent:
                     text = base64.b64decode(raw).decode("utf-8",
                                                          errors="replace")
                 except Exception:
+                    logger.exception("decode message data for %s", agent_id)
                     text = ""
-                if len(text) > 10:
+                if len(text) > MIN_SEMANTIC_TEXT_LEN:
                     return {
                         "sender": agent_id,
                         "receiver": m.get("dst", "?"),
-                        "content": text[:200],
+                        "content": text[:MAX_SEMANTIC_CONTENT_LEN],
                     }
         return {}
 
@@ -492,9 +507,9 @@ class MonitorAgent:
         m = len(interactions)
         topo = obs.get("_topology", "unknown")
         agent_list = sorted(agents.keys())
-        agents_str = ", ".join(agent_list[:8])
-        if n > 8:
-            agents_str += f" ...(+{n-8})"
+        agents_str = ", ".join(agent_list[:MAX_AGENTS_TO_LIST])
+        if n > MAX_AGENTS_TO_LIST:
+            agents_str += f" ...(+{n-MAX_AGENTS_TO_LIST})"
         return {
             "topology": topo,
             "agents": n,
@@ -502,8 +517,7 @@ class MonitorAgent:
             "agent_list": agents_str,
         }
 
-    def _format_anomaly_log(self, report, obs: dict,
-                             output_dir: str = None) -> str:
+    def _format_anomaly_log(self, report, obs: dict) -> str:
         if not report.anomalous_nodes:
             return ""
 
@@ -514,11 +528,8 @@ class MonitorAgent:
         try:
             evidence = self._semantic_rule_checker.get_evidence(obs)
         except Exception:
-            pass
+            logger.exception("get_evidence failed")
 
-        import re
-        seen = set()
-        dup_count = 0
         sem_types = report.semantic_result.get("anomaly_types", []) if report.semantic_result else []
         obs_type = obs.get("_anomaly_type", "") if isinstance(obs, dict) else ""
         first_type = sem_types[0] if sem_types else (obs_type if obs_type and obs_type != "normal" else "unknown")
@@ -536,8 +547,8 @@ class MonitorAgent:
             atype = first_type
             module = self._classify_module(atype)
             is_sem = atype in self._SEMANTIC_TYPES
-            severity = "HIGH" if risk >= 0.8 else ("MEDIUM" if risk >= 0.5
-                                                     else "LOW")
+            severity = "HIGH" if risk >= SEVERITY_HIGH_THRESHOLD else ("MEDIUM" if risk >= SEVERITY_MEDIUM_THRESHOLD
+                                                                         else "LOW")
 
             ev = evidence.get(aid, {}).get(atype, {})
             try:
@@ -546,6 +557,7 @@ class MonitorAgent:
                 else:
                     cause = f"Anomaly type '{atype}' detected on {aid}"
             except Exception:
+                logger.exception("get_root_cause failed for %s/%s", aid, atype)
                 cause = f"Anomaly type '{atype}' detected on {aid}"
 
             cause_norm = re.sub(r"detected on \S+", "detected on <agent>", cause)
@@ -569,7 +581,7 @@ class MonitorAgent:
             is_sem = atype in self._SEMANTIC_TYPES
             severity = "HIGH"
             cause = f"Anomaly type '{atype}' detected in observation"
-            self._write_entry(lines, module, atype, severity, 1.0,
+            self._write_entry(lines, module, atype, severity, SUPPLEMENTAL_SEVERITY_RISK,
                               "unknown", cause, obs, agent_ids, ts, is_sem)
 
         log_text = "\n".join(lines)
@@ -579,13 +591,8 @@ class MonitorAgent:
     def interaction_graph(self):
         return self._interaction_graph
 
-    @property
-    def utterance_graph(self):
-        return self._utterance_graph
-
     def clear(self):
         self._interaction_graph.clear()
-        self._utterance_graph.clear()
         self._temporal_detector.clear()
         self._intervention.clear()
         self._history.clear()
@@ -593,18 +600,18 @@ class MonitorAgent:
 
     def _write_entry(self, lines, module, atype, severity, risk, aid,
                      cause, obs, agent_ids, ts, is_sem):
-        lines.append("=" * 54)
+        lines.append("=" * LINE_SEPARATOR_LEN)
         lines.append(f"[{module}] {atype} ({severity})")
         lines.append(f"risk={risk:.3f}  time={ts}")
         ebpf_pid = obs.get("agents", {}).get(aid, {}).get("_ebpf_pid", "")
         if ebpf_pid:
             lines.append(f"agent={aid}  ebpf={ebpf_pid}")
-        lines.append("-" * 54)
+        lines.append("-" * LINE_SEPARATOR_LEN)
         events = self._collect_events(obs, agent_ids)
         lines.append("[event sequence]")
-        for e in events[:6]:
-            detail = (e["detail"][:40] + "...") if len(
-                e["detail"]) > 40 else e["detail"]
+        for e in events[:MAX_EVENTS_DISPLAY]:
+            detail = (e["detail"][:DETAIL_TRUNCATE_LEN] + "...") if len(
+                e["detail"]) > DETAIL_TRUNCATE_LEN else e["detail"]
             if detail:
                 lines.append(f'  - {e["agent"]}  {e["op"]} -> {e["target"]}  "{detail}"')
             else:
@@ -615,7 +622,7 @@ class MonitorAgent:
                 lines.append("[semantic association]")
                 lines.append(f"  sender: {ctx['sender']}"
                              f" -> receiver: {ctx['receiver']}")
-                lines.append(f'  content: "{ctx["content"][:160]}"')
+                lines.append(f'  content: "{ctx["content"][:MAX_CONTENT_TRUNCATE_LEN]}"')
         lines.append("[root cause]")
         lines.append(f"  {cause}")
         view = self._analyze_view(obs, atype)
@@ -625,7 +632,7 @@ class MonitorAgent:
                      f"  edges={view['edges']}")
         if view['agent_list']:
             lines.append(f"  agents: {view['agent_list']}")
-        lines.append("=" * 54)
+        lines.append("=" * LINE_SEPARATOR_LEN)
         lines.append("")
 
 

@@ -2,6 +2,8 @@ import networkx as nx
 import numpy as np
 from typing import Dict, List, Optional, Tuple
 
+from inter_agent.data.features import NODE_FEATURE_DIM, EDGE_FEATURE_DIM
+
 
 class AgentInteractionGraph:
     """Agent-level interaction graph built from Redis observation data.
@@ -65,7 +67,7 @@ class AgentInteractionGraph:
         n = self.node_count
         if n == 0:
             return None
-        x = torch.zeros((n, 14), dtype=torch.float)
+        x = torch.zeros((n, NODE_FEATURE_DIM), dtype=torch.float)
         edge_indices = []
         edge_attrs = []
         type_map = {"api_call": 0, "message": 1, "file_share": 2}
@@ -79,7 +81,7 @@ class AgentInteractionGraph:
             w = d.get("weight", 1.0)
             edge_attrs.append([t, w, 0.0, 0.0, 0.0, 0.0])
         edge_index = torch.tensor(edge_indices, dtype=torch.long).t() if edge_indices else torch.zeros((2, 0), dtype=torch.long)
-        edge_attr_t = torch.tensor(edge_attrs, dtype=torch.float) if edge_attrs else torch.zeros((0, 6), dtype=torch.float)
+        edge_attr_t = torch.tensor(edge_attrs, dtype=torch.float) if edge_attrs else torch.zeros((0, EDGE_FEATURE_DIM), dtype=torch.float)
         return (x, edge_index, edge_attr_t)
 
     @property

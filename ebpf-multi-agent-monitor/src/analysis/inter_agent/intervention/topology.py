@@ -39,13 +39,16 @@ class TopologyIntervention:
                 try:
                     edges_to_remove = list(graph.in_edges(src)) + list(graph.out_edges(src))
                 except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception("get edges for %s", src)
                     edges_to_remove = []
                 for u, v in edges_to_remove:
                     self._pruned_edges.append((u, v))
                     try:
                         graph.remove_edge(u, v)
                     except Exception:
-                        pass
+                        import logging
+                        logging.getLogger(__name__).warning("remove_edge(%s, %s) failed", u, v)
 
         for path_info in prop_paths:
             path = path_info.get("path", [])

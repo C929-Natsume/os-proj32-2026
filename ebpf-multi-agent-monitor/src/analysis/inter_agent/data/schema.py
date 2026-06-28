@@ -308,6 +308,15 @@ This is the Python dict assembled by RedisCollector for the detection pipeline.
     "window_start_ns": 1234567890000
 }
 
+=================== RESPONSE LEVELS ===================
+
+The monitoring system applies four response levels to anomaly reports:
+
+  PASS    — No action required
+  ALERT   — Log and notify
+  BLOCK   — Block further operations
+  ISOLATE — Isolate the agent or session
+
 =================== KEY RELATIONSHIP SUMMARY ===================
 
 Redis SET:  inter:agents              -- discover all agents

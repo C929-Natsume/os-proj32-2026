@@ -86,6 +86,8 @@ class ContentFeatureExtractor:
         try:
             return base64.b64decode(raw)
         except Exception:
+            import logging
+            logging.getLogger(__name__).debug("fallback to raw bytes for non-base64 data")
             return raw.encode("utf-8", errors="replace")
 
     def _agent_features(self, msg_list: list) -> np.ndarray:

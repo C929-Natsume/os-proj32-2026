@@ -1,4 +1,4 @@
-"""Simulator for generating training data matching the Redis JSON schema.
+﻿"""Simulator for generating training data matching the Redis JSON schema.
 
 Generates normal observations and injected anomalies for unsupervised
 DOMINANT pre-training and semi-supervised fine-tuning.
@@ -312,10 +312,26 @@ class Simulator:
         self._rng.shuffle(normal_data)
         self._rng.shuffle(anomaly_data)
 
+        # Compute split indices dynamically from actual counts.
+        # Ratios: normal -> 70/15/15, anomaly -> 50/20/30 (test gets remainder).
+        n_train_normal = int(num_normal * 0.70)
+        n_val_normal   = int(num_normal * 0.15)
+        n_train_anom   = int(num_anomaly * 0.50)
+        n_val_anom     = int(num_anomaly * 0.20)
+
         splits = {
-            "train": {"normal": normal_data[:350], "anomaly": anomaly_data[:30]},
-            "val": {"normal": normal_data[350:420], "anomaly": anomaly_data[30:50]},
-            "test": {"normal": normal_data[420:500], "anomaly": anomaly_data[50:100]},
+            "train": {
+                "normal": normal_data[:n_train_normal],
+                "anomaly": anomaly_data[:n_train_anom],
+            },
+            "val": {
+                "normal": normal_data[n_train_normal:n_train_normal + n_val_normal],
+                "anomaly": anomaly_data[n_train_anom:n_train_anom + n_val_anom],
+            },
+            "test": {
+                "normal": normal_data[n_train_normal + n_val_normal:],
+                "anomaly": anomaly_data[n_train_anom + n_val_anom:],
+            },
         }
 
         # Unlabeled: normal only (for DOMINANT pre-training)

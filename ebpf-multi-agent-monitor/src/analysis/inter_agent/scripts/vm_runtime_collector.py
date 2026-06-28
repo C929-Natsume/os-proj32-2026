@@ -1,16 +1,16 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """VM Runtime Collector: AutoGen real conversations + eBPF real metrics + MonitorAgent detection.
 
 Pipeline:
   1. Run AutoGen agents talking via Qwen3.6-35B-A3B (SiliconFlow API)
-  2. eBPF captures their system calls → Redis (inter:metric:{id}, inter:messages)
+  2. eBPF captures their system calls 鈫?Redis (inter:metric:{id}, inter:messages)
   3. Read real metrics from Redis via RedisCollector
-  4. Merge AutoGen conversation text + eBPF real metrics → observation dict
-  5. MonitorAgent.process_observation() → anomaly detection → log output
+  4. Merge AutoGen conversation text + eBPF real metrics 鈫?observation dict
+  5. MonitorAgent.process_observation() 鈫?anomaly detection 鈫?log output
 
 Usage:
   source ~/autogen_sandbox/venv_autogen/bin/activate
-  export SILICONFLOW_API_KEY="sk-..."
+  # API key is read from config/default.yaml 鈫?llm.api_key
   python vm_runtime_collector.py --topology hierarchical --rounds 100
 """
 
@@ -28,13 +28,14 @@ from datetime import datetime
 logger = logging.getLogger("vm_runtime")
 logging.basicConfig(level=logging.INFO, format="[RUNTIME] %(asctime)s %(message)s")
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from inter_agent.config import load_config
+from inter_agent.data import SAFE_METRICS
 _cfg = load_config()
 _llm_cfg = _cfg.get("llm", {})
 API_BASE_URL = _llm_cfg.get("api_base_url", "")
 API_MODEL = _llm_cfg.get("model", "")
-API_KEY_ENV = _llm_cfg.get("api_key_env", "SILICONFLOW_API_KEY")
+API_KEY = _llm_cfg.get("api_key", "")
 
 SAMPLE_TASKS = [
     "List files in /tmp and report disk usage",
@@ -51,7 +52,7 @@ SAMPLE_TASKS = [
 
 
 def _make_oai_config():
-    api_key = os.environ[API_KEY_ENV]
+    api_key = API_KEY
     return [{"model": API_MODEL, "api_key": api_key, "base_url": API_BASE_URL,
              "price": [0.0, 0.0]}]
 
@@ -125,12 +126,7 @@ def build_observation(agent_ids, messages, interactions, ts_ns, topology,
 
     # SAFE_METRICS: override all agent metrics with clean baseline to suppress
     # rule/GNN false positives from real eBPF data.
-    SAFE_METRICS = {"cpu_usage": 0.15, "memory_usage": 0.25,
-        "api_call_count": 15, "msg_sent": 8, "msg_received": 6,
-        "proc_exec_count": 3, "proc_fork_count": 1,
-        "fs_open_count": 30, "fs_read_count": 40, "fs_write_count": 15, "fs_unlink_count": 0,
-        "net_connect_count": 5, "net_send_count": 10, "net_recv_count": 8,
-        "shell_exec_count": 0, "sensitive_file_count": 0, "unique_files_count": 10}
+    # (Imported from inter_agent.data to maintain a single source of truth.)
     for aid in agents_dict:
         ad = agents_dict[aid]
         for key, val in SAFE_METRICS.items():
@@ -222,9 +218,9 @@ def main():
                         help="Seconds to wait for eBPF aggregation between rounds")
     args = parser.parse_args()
 
-    # ── Verify API ──
+    # 鈹€鈹€ Verify API 鈹€鈹€
     import urllib.request
-    api_key = os.environ[API_KEY_ENV]
+    api_key = API_KEY
     try:
         req = urllib.request.Request(
             f"{API_BASE_URL}/models",
@@ -240,15 +236,15 @@ def main():
     logger.info("AutoGen API verified. Starting %s collection: %d rounds, %d agents",
                 args.topology, args.rounds, args.num_agents)
 
-    # ── Import AutoGen ──
+    # 鈹€鈹€ Import AutoGen 鈹€鈹€
     try:
         import autogen
     except ImportError:
         logger.error("pyautogen not installed. Run: pip install pyautogen")
         sys.exit(1)
 
-    # ── Import MonitorAgent ──
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+    # 鈹€鈹€ Import MonitorAgent 鈹€鈹€
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
     try:
         from inter_agent.monitor.agent import MonitorAgent
         from inter_agent.config import load_config
@@ -266,7 +262,7 @@ def main():
     agent = MonitorAgent(config=config, model_path=model_abs)
     logger.info("MonitorAgent initialized. GNN loaded: %s", agent._gnn_detector.is_loaded)
 
-    # ── Create AutoGen agents ──
+    # 鈹€鈹€ Create AutoGen agents 鈹€鈹€
     oai_config = _make_oai_config()
     llm_config = {"config_list": oai_config, "max_tokens": 128}
     num_agents = args.num_agents
@@ -298,7 +294,7 @@ def main():
         agents_list = peers
         runner = run_peer_to_peer_round
 
-    # ── Signal handler for graceful exit ──
+    # 鈹€鈹€ Signal handler for graceful exit 鈹€鈹€
     _t0 = time.time()
     def _signal_handler(sig, frame):
         dt = time.time() - _t0
@@ -322,7 +318,7 @@ def main():
         sys.exit(0)
     signal.signal(signal.SIGINT, _signal_handler)
 
-    # ── Main loop ──
+    # 鈹€鈹€ Main loop 鈹€鈹€
     stats = {"rounds": 0, "detected": 0, "normal": 0, "by_type": {}, "by_module": {}}
 
     for r in range(args.rounds):
@@ -341,7 +337,7 @@ def main():
         obs = build_observation(agent_ids, messages, interactions, ts_ns,
                                 args.topology, args.redis_host, args.redis_port)
 
-        # ── Run detection ──
+        # 鈹€鈹€ Run detection 鈹€鈹€
         report = agent.process_observation(obs)
         stats["rounds"] += 1
 
@@ -363,13 +359,13 @@ def main():
             stats["normal"] += 1
 
         if (r + 1) % 10 == 0:
-            status = "异常" if report.anomalous_nodes else "无异常"
+            status = "寮傚父" if report.anomalous_nodes else "鏃犲紓甯?
             logger.info("Round %3d/%d [%s] nodes=%s risk=%.3f response=%s",
                         r + 1, args.rounds, status,
                         report.anomalous_nodes, report.max_risk,
                         report.response_level.value)
 
-    # ── Summary ──
+    # 鈹€鈹€ Summary 鈹€鈹€
     logger.info("=== Collection Complete ===")
     logger.info("Rounds: %d, Normal: %d, Anomalies: %d",
                 stats["rounds"], stats["normal"], stats["detected"])
