@@ -1,6 +1,10 @@
 #ifndef COMMON_H
 #define COMMON_H
 
+#ifndef __BPF__
+#include <linux/types.h>
+#endif
+
 #define MAX_COMM_LEN 16
 #define MAX_PATH_LEN 512
 
@@ -56,7 +60,6 @@ struct tcp_listen_key {
 
 // 捕获 MCP stdio、A2A/ACP/ANP localhost HTTP 通信
 #define RAW_DATA_BUF_SIZE  16384  // 单次截获最大 16KB
-#define RAW_TASK_COMM_LEN  16
 
 enum raw_data_source {
     RAW_SRC_STDIO = 1,   // stdin/stdout 捕获
@@ -78,7 +81,7 @@ struct raw_data_event {
     enum raw_data_source source; // 数据来源
     __u32 fd;                    // 文件描述符
     __u32 peer_pid;              // stdio: 对端 PID (父/子进程)
-    char comm[RAW_TASK_COMM_LEN];
+    char comm[MAX_COMM_LEN];
     __u8 buf[RAW_DATA_BUF_SIZE];
 };
 

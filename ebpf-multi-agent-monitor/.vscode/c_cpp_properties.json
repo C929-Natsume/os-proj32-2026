@@ -1,21 +1,34 @@
 {
     "configurations": [
         {
-            "name": "Linux",
+            "name": "BPF Kernel",
             "includePath": [
-                "${workspaceFolder}/**",
+                "${workspaceFolder}/src/bpf",
+                "${workspaceFolder}/build",
+                "/home/gabriel/comp/project3136859-387615/libbpf/include",
+                "/home/gabriel/comp/project3136859-387615/libbpf/src",
+                "/home/gabriel/comp/project3136859-387615/bpftool/src/libbpf/include",
+                "/home/gabriel/comp/project3136859-387615/vmlinux"
+            ],
+            "defines": ["__TARGET_ARCH_x86", "__BPF__", "__KERNEL__"],
+            "compilerPath": "/usr/bin/clang",
+            "cStandard": "c17",
+            "intelliSenseMode": "linux-clang-x64"
+        },
+        {
+            "name": "User-space",
+            "includePath": [
                 "${workspaceFolder}/src/bpf",
                 "${workspaceFolder}/src/user",
-                "${workspaceFolder}/src/analysis",
-                "/usr/include",
-                "/usr/local/include",
-                "/usr/include/bpf",
-                "/usr/include/linux"
+                "${workspaceFolder}/build",
+                "/home/gabriel/comp/project3136859-387615/libbpf/include",
+                "/home/gabriel/comp/project3136859-387615/libbpf/src",
+                "/home/gabriel/comp/project3136859-387615/bpftool/src/libbpf/include",
+                "/mnt/e/os2026"
             ],
             "defines": [],
             "compilerPath": "/usr/bin/gcc",
             "cStandard": "c17",
-            "cppStandard": "c++17",
             "intelliSenseMode": "linux-gcc-x64"
         }
     ],

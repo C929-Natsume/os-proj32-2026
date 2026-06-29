@@ -9,6 +9,7 @@
 #include <getopt.h>
 #include <linux/types.h>
 #include "../bpf/common.h"
+#include "../bpf/agent_registry.h"
 
 #define MAX_KNOWN_PIDS 2048
 
@@ -20,9 +21,8 @@ extern void teardown_sys_behavior(void);
 extern int setup_ssl_sniffer(int *target_pids, int count);
 extern void teardown_ssl_sniffer(void);
 
-// 向内核态 Map 注册身份信息
-extern int register_agent_sys(int pid, __u32 agent_id, const char *agent_name);
-extern int register_agent_ssl(int pid, __u32 agent_id, const char *agent_name);
+extern int get_monitored_pids_fd(void);
+extern int get_agent_info_map_fd(void);
 
 extern int add_new_agents_ssl(int *target_pids, int count);
 
@@ -282,8 +282,8 @@ int main(int argc, char **argv) {
         strncpy(assigned_name, full_name, MAX_AGENT_NAME_LEN - 1);
         assigned_name[MAX_AGENT_NAME_LEN - 1] = '\0';
 
-        register_agent_sys(pid, assigned_id, assigned_name);
-        register_agent_ssl(pid, assigned_id, assigned_name);
+        register_agent(get_monitored_pids_fd(), pid, assigned_id, assigned_name);
+        register_agent(get_agent_info_map_fd(), pid, assigned_id, assigned_name);
         add_known_pid(pid); 
 
         printf("  -> [初始绑定] 成功 | PID: %d <==> ID: %u, 名称: %s\n", pid, assigned_id, assigned_name);
@@ -326,8 +326,8 @@ int main(int argc, char **argv) {
                 strncpy(assigned_name, full_name, MAX_AGENT_NAME_LEN - 1);
                 assigned_name[MAX_AGENT_NAME_LEN - 1] = '\0';
 
-                register_agent_sys(pid, assigned_id, assigned_name);
-                register_agent_ssl(pid, assigned_id, assigned_name);
+                register_agent(get_monitored_pids_fd(), pid, assigned_id, assigned_name);
+                register_agent(get_agent_info_map_fd(), pid, assigned_id, assigned_name);
                 add_known_pid(pid); 
 
                 printf("  -> [动态新增] 绑定成功 | PID: %d <==> ID: %u, 名称: %s\n", pid, assigned_id, assigned_name);

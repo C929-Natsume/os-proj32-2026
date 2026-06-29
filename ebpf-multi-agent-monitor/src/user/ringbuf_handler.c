@@ -8,15 +8,10 @@
 #include "../bpf/common.h"
 #include <time.h>
 
-extern void fetch_and_ship_resources(int res_fd);
-#define RES_MAP_PIN_PATH "/sys/fs/bpf/res_map"
+#include "redis_client.h"
+#include "metrics_aggregator.h"
 
-// 外部 Redis 数据推送接口
-extern int redis_shipper_init(void);
-extern void redis_shipper_close(void);
-extern int ship_sys_event(struct sys_event *event);
-extern int ship_ssl_event(struct probe_SSL_data_t *event);
-extern int ship_raw_event(struct raw_data_event *event);
+#define RES_MAP_PIN_PATH "/sys/fs/bpf/res_map"
 
 #define SYS_RB_PIN_PATH "/sys/fs/bpf/sys_rb"
 #define SSL_RB_PIN_PATH "/sys/fs/bpf/ssl_rb"

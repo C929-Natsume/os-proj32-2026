@@ -1,9 +1,6 @@
 #ifndef __SYS_BEHAVIOR_H
 #define __SYS_BEHAVIOR_H
 
-#define MAX_COMM_LEN 16
-#define MAX_PATH_LEN 512
-
 struct sys_event {
     __u32 event_type;
     __u32 pid;

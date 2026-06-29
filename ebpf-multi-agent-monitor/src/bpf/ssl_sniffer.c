@@ -37,12 +37,30 @@ static void mark_path_attached(const char *path) {
 // 全局骨架指针
 static struct ssl_sniffer_bpf *skel = NULL;
 
+// 存储所有 uprobe link 以便安全清理
+#define MAX_UPROBE_LINKS 2048
+static struct bpf_link *uprobe_links[MAX_UPROBE_LINKS];
+static int uprobe_link_count = 0;
+
+static void store_link(struct bpf_link *link) {
+    if (link && !libbpf_get_error(link) && uprobe_link_count < MAX_UPROBE_LINKS) {
+        uprobe_links[uprobe_link_count++] = link;
+    }
+}
+
+static void destroy_all_links(void) {
+    for (int i = 0; i < uprobe_link_count; i++) {
+        bpf_link__destroy(uprobe_links[i]);
+    }
+    uprobe_link_count = 0;
+}
+
 // 挂载探针宏
 #define ATTACH_UPROBE(skel, bin, sym, prog, is_retprobe) do { \
     LIBBPF_OPTS(bpf_uprobe_opts, opts, .func_name = sym, .retprobe = is_retprobe); \
     struct bpf_link *link = bpf_program__attach_uprobe_opts(skel->progs.prog, -1, bin, 0, &opts); \
     if (libbpf_get_error(link)) fprintf(stderr, "[-] Failed to attach %s to %s\n", sym, bin); \
-    else printf("[+] Attached %s to %s\n", sym, bin); \
+    else { printf("[+] Attached %s to %s\n", sym, bin); store_link(link); } \
 } while(0)
 
 // 按物理地址偏移量挂载的宏
@@ -50,7 +68,7 @@ static struct ssl_sniffer_bpf *skel = NULL;
     LIBBPF_OPTS(bpf_uprobe_opts, opts, .retprobe = is_retprobe); \
     struct bpf_link *link = bpf_program__attach_uprobe_opts(skel->progs.prog, -1, bin, offset, &opts); \
     if (libbpf_get_error(link)) fprintf(stderr, "[-] Failed to attach offset 0x%zx to %s\n", offset, bin); \
-    else printf("[+] Attached offset 0x%zx to %s\n", offset, bin); \
+    else { printf("[+] Attached offset 0x%zx to %s\n", offset, bin); store_link(link); } \
 } while(0)
 
 static bool verbose = false;
@@ -327,36 +345,9 @@ int add_new_agents_ssl(int *target_pids, int count) {
     return 0;
 }
 
-/**
- * 注册智能体身份到内核 Map
- * @param pid 目标智能体的物理进程 PID
- * @param agent_id 分配给该智能体的唯一数字编号
- * @param agent_name 分配给该智能体的文本名称
- */
-int register_agent_ssl(int pid, __u32 agent_id, const char *agent_name) {
-    if (!skel) {
-        fprintf(stderr, "[-] register_agent_ssl: Skeleton not loaded!\n");
-        return -1;
-    }
-    
-    // 构造上下文字典
-    struct process_context ctx = {0};
-    ctx.agent_id = agent_id;
-    ctx.is_sub_agent = 1;
-    ctx.parent_pid = 0;
-    
-    // 安全拷贝名字
-    strncpy(ctx.agent_name, agent_name, MAX_AGENT_NAME_LEN - 1);
-    ctx.agent_name[MAX_AGENT_NAME_LEN - 1] = '\0'; 
-
-    // 获取 ssl_sniffer.bpf.c 中定义的 agent_info_map 的文件描述符
-    int map_fd = bpf_map__fd(skel->maps.agent_info_map);
-    
-    // 将 PID 作为 Key，上下文作为 Value 写入内核
-    return bpf_map__update_elem(skel->maps.agent_info_map, 
-        &pid, sizeof(pid), 
-        &ctx, sizeof(ctx), 
-        BPF_ANY);
+int get_agent_info_map_fd(void) {
+    if (!skel) return -1;
+    return bpf_map__fd(skel->maps.agent_info_map);
 }
 
 /**
@@ -364,6 +355,7 @@ int register_agent_ssl(int pid, __u32 agent_id, const char *agent_name) {
  */
 void teardown_ssl_sniffer(void) {
     if (skel) {
+        destroy_all_links();
         bpf_map__unpin(skel->maps.rb, SSL_RB_PIN_PATH);
         ssl_sniffer_bpf__destroy(skel);
         skel = NULL;

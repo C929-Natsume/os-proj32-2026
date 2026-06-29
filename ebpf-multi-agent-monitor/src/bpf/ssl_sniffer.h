@@ -3,7 +3,6 @@
 
 #define MAX_BUF_SIZE 65536 // 单次截获最大 64KB 
 #define RING_BUFFER_SIZE (4 * 1024 * 1024) // 4MB 环形缓冲区
-#define TASK_COMM_LEN 16
 
 // 区分来源引擎，便于用户态解析
 enum sniff_engine {
@@ -29,7 +28,7 @@ struct probe_SSL_data_t {
     int rw;                // 0: READ, 1: WRITE, 2: HANDSHAKE
     int is_handshake;      // 标志位：是否为握手包
     enum sniff_engine engine; 
-    char comm[TASK_COMM_LEN];
+    char comm[MAX_COMM_LEN];
     __u8 buf[MAX_BUF_SIZE];
 };
 
