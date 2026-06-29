@@ -9,7 +9,7 @@ import json, sys, os, time, copy
 import numpy as np
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.dirname(BASE))
+sys.path.insert(0, BASE)
 
 from inter_agent.config import load_config
 from inter_agent.monitor.agent import MonitorAgent
@@ -65,7 +65,7 @@ def run_eval(agent, label):
     f1   = 2*prec*rec/(prec+rec) if (prec+rec) else 0
     acc  = (tp+tn)/n
     try: auc = roc_auc_score(labels_a, risks_a)
-    except: auc = 0.
+    except Exception: auc = 0.
 
     print(f"  Risk>={THRESH}  Prec={prec:.4f}  Rec={rec:.4f}  F1={f1:.4f}  AUC={auc:.4f}  FP={fp}  FN={fn}")
     print(f"\n  {'Type':35s} {'Mod':6s} {'Risk>={}'.format(THRESH):>7} {'Cnt':>4}")
@@ -108,7 +108,6 @@ print("=" * 80)
 print(f"  GNN loaded:     F1={f1_gnn:.4f}   AUC={auc_gnn:.4f}")
 print(f"  GNN not loaded: F1={f1_no_gnn:.4f}  AUC={auc_no_gnn:.4f}")
 print()
-print("  GNN+SemRule baseline from eval_full_system.py:")
-print(f"  Combined F1=0.7889 AUC=0.7983  Recall=0.8447 Precision=0.7400")
-print(f"  (OR fusion, 2 modules only)")
+print("  Baseline (eval_full_system.py, 2 modules OR fusion):")
+print(f"  Combined F1≈0.79  AUC≈0.80  Recall≈0.84  Precision≈0.74")
 print("=" * 80)

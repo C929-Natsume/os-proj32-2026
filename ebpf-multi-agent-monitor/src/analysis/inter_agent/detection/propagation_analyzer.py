@@ -82,6 +82,8 @@ class PropagationPathAnalyzer:
             try:
                 neighbors = list(self._graph.successors(current))
             except Exception:
+                import logging
+                logging.getLogger(__name__).exception("get successors for %s", current)
                 neighbors = []
 
             for nbr in neighbors:

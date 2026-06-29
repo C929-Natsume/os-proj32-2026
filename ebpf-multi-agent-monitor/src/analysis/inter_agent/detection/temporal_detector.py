@@ -1,4 +1,4 @@
-import numpy as np
+﻿import numpy as np
 from collections import deque
 from typing import Dict, List, Optional
 
@@ -10,13 +10,6 @@ try:
 except ImportError:
     HAS_TORCH = False
     nn = None
-
-
-class TemporalEncoder:
-    def __init__(self, input_dim=4, hidden_dim=32, num_layers=2):
-        self._input_dim = input_dim
-        self._hidden_dim = hidden_dim
-        self._dummy = True
 
 
 class TemporalAnomalyDetector:

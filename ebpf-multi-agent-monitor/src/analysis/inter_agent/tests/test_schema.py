@@ -2,10 +2,7 @@
 
 import json
 import pytest
-import sys
 import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from inter_agent.data.schema import *  # noqa — check module loads
 
@@ -13,31 +10,49 @@ from inter_agent.data.schema import *  # noqa — check module loads
 class TestSchemaCoverage:
     """Verify schema covers all event types from common.h and intra_agent."""
 
+    def test_schema_module_loads(self):
+        """Verify schema module is loadable and contains documentation."""
+        import inter_agent.data.schema as s
+        assert hasattr(s, "__doc__")
+        assert "inter:agents" in (s.__doc__ or "")
+
     def test_proc_event_subtypes(self):
         """Must cover all proc_event_type enum values from common.h."""
         required = {"PROC_EXEC", "PROC_FORK", "PROC_EXIT",
                     "PROC_SIGNAL", "PROC_SETUID"}
-        assert required, "PROC subtypes defined"
+        import inter_agent.data.schema as s
+        doc = s.__doc__ or ""
+        for t in required:
+            assert t in doc, f"{t} not documented in schema.py"
 
     def test_fs_event_subtypes(self):
         """Must cover all fs_event_type enum values from common.h."""
         required = {"FS_OPEN", "FS_CLOSE", "FS_READ", "FS_WRITE",
                     "FS_UNLINK", "FS_RENAME", "FS_CHMOD",
                     "FS_CREATE", "FS_RMDIR"}
-        assert required, "FS subtypes defined"
+        import inter_agent.data.schema as s
+        doc = s.__doc__ or ""
+        for t in required:
+            assert t in doc, f"{t} not documented in schema.py"
 
     def test_net_event_subtypes(self):
         """Must cover all net_event_type enum values from common.h."""
         required = {"NET_SOCKET", "NET_CONNECT", "NET_BIND",
                     "NET_LISTEN", "NET_ACCEPT", "NET_SEND",
                     "NET_RECV", "NET_CLOSE", "NET_TCP_STATE"}
-        assert required, "NET subtypes defined"
+        import inter_agent.data.schema as s
+        doc = s.__doc__ or ""
+        for t in required:
+            assert t in doc, f"{t} not documented in schema.py"
 
     def test_intra_agent_alert_types(self):
         """Must cover all audit rules from intra_analyzer.c."""
         required = {"UNEXPECTED_SHELL_EXEC", "SENSITIVE_FILE_ACCESS",
                     "OUT_OF_WORKSPACE_OPERATION", "POSSIBLE_LOGIC_LOOP"}
-        assert required, "intra_agent alert types defined"
+        import inter_agent.data.schema as s
+        doc = s.__doc__ or ""
+        for t in required:
+            assert t in doc, f"{t} not documented in schema.py"
 
     def test_intra_agent_counters(self):
         """Must cover all pid_stats fields from intra_analyzer.c."""
@@ -47,12 +62,18 @@ class TestSchemaCoverage:
             "net_connect_count", "net_send_count", "net_recv_count",
             "unique_files_count", "window_start_ns",
         }
-        assert required, "intra_agent counters in metric schema"
+        import inter_agent.data.schema as s
+        doc = s.__doc__ or ""
+        for t in required:
+            assert t in doc, f"{t} not documented in schema.py"
 
     def test_response_levels(self):
         """PASS/ALERT/BLOCK/ISOLATE from inter_agent design."""
         levels = {"PASS", "ALERT", "BLOCK", "ISOLATE"}
-        assert levels, "response levels defined"
+        import inter_agent.data.schema as s
+        doc = s.__doc__ or ""
+        for t in levels:
+            assert t in doc, f"{t} not documented in schema.py"
 
 
 class TestObservationFormat:

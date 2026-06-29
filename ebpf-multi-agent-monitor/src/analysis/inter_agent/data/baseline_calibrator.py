@@ -1,9 +1,9 @@
-"""Baseline calibrator — fits distributions from real eBPF observations.
+﻿"""Baseline calibrator 鈥?fits distributions from real eBPF observations.
 
 Captured data (via DataRecorder) serves as the statistical baseline.
 The calibrator preserves the *covariance structure* between fields
-that real eBPF data produces (e.g., cpu_usage↑ correlates with
-proc_exec_count↑), then generates arbitrarily many training samples
+that real eBPF data produces (e.g., cpu_usage鈫?correlates with
+proc_exec_count鈫?, then generates arbitrarily many training samples
 with correct multivariate statistics.
 
 Now supports variable agent counts, diverse topologies, causal edge
@@ -34,7 +34,7 @@ ALL_TOPOLOGIES = [
     "hierarchical", "peer-to-peer", "chain", "tree", "ring", "scale_free", "random",
 ]
 
-# ── field definitions (mirrors collector.py + gnn_detector.py) ──────────────
+# 鈹€鈹€ field definitions (mirrors collector.py + gnn_detector.py) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 INT_FIELDS = [
     "proc_exec_count", "proc_fork_count", "fs_open_count",
@@ -67,7 +67,7 @@ FLOAT_FIELDS = ["cpu_usage", "memory_usage"]
 ALL_FIELDS = INT_FIELDS + FLOAT_FIELDS + ZERO_INFLATED_FIELDS + TEMP_FIELDS + TEMP_FLOAT_FIELDS
 
 
-# ── helpers ─────────────────────────────────────────────────────────────────
+# 鈹€鈹€ helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 def _to_field_array(observations, filter_zero=False):
@@ -110,7 +110,7 @@ def _clip_generated(x, field_idx, n_int):
         return float(x)  # temporal float delta/accel
 
 
-# ── topology builders ───────────────────────────────────────────────────────
+# 鈹€鈹€ topology builders 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 def _build_topology_hierarchical(agent_ids, rng, metrics_dict=None):
@@ -222,7 +222,7 @@ def _build_topology_ring(agent_ids, rng, metrics_dict=None):
 
 
 def _build_topology_scale_free(agent_ids, rng, metrics_dict=None):
-    """Preferential attachment (Barabási–Albert). ~2*N edges."""
+    """Preferential attachment (Barab谩si鈥揂lbert). ~2*N edges."""
     n = len(agent_ids)
     if n < 2:
         return []
@@ -288,7 +288,7 @@ TOPOLOGY_BUILDERS = {
 
 
 def _apply_causal_edges(interactions, agent_ids, fields_list, rng, strength=1.0):
-    """Filter interactions: keep edge with probability sigmoid(β·metrics).
+    """Filter interactions: keep edge with probability sigmoid(尾路metrics).
 
     This creates a causal link between agent metrics and graph structure.
     Agents with high api_call_count / msg_sent are more likely to have edges.
@@ -315,19 +315,17 @@ def _apply_causal_edges(interactions, agent_ids, fields_list, rng, strength=1.0)
     return kept
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# BaselineCalibrator
-# ═══════════════════════════════════════════════════════════════════════════════
-
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?# BaselineCalibrator
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 class BaselineCalibrator:
     """Fits and samples from the multivariate distribution of real eBPF data.
 
     Algorithm:
-      1. fit() : compute mean vector μ, covariance Σ, and Cholesky L
+      1. fit() : compute mean vector 渭, covariance 危, and Cholesky L
          from real observations.  Also record zero-inflation probabilities
          for shell_exec / sensitive_file.
-      2. generate_normal() : z ~ N(0,I) → z_corr = L @ z → x = μ + z_corr * σ
-         → round counts, clip.
+      2. generate_normal() : z ~ N(0,I) 鈫?z_corr = L @ z 鈫?x = 渭 + z_corr * 蟽
+         鈫?round counts, clip.
       3. generate_anomaly() : same but then apply DataRecorder._inject_anomaly
          post-hoc.
     """
@@ -366,14 +364,14 @@ class BaselineCalibrator:
         self._n_real_observations = 0
         self._fitted = False
 
-    # ── fitting ──────────────────────────────────────────────────────────
+    # 鈹€鈹€ fitting 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def fit(self, observations):
         """Fit multivariate distribution from a list of observation dicts."""
         data = _to_field_array(observations, filter_zero=True)
         if data.shape[0] < 10:
             raise ValueError(
-                f"Need ≥10 agent-samples (got {data.shape[0]}). "
+                f"Need 鈮?0 agent-samples (got {data.shape[0]}). "
                 "Collect more observations."
             )
 
@@ -418,16 +416,17 @@ class BaselineCalibrator:
         )
         return self
 
-    # ── field ordering ───────────────────────────────────────────────────
+    # 鈹€鈹€ field ordering 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def _field_index(self, name: str) -> int:
         return ALL_FIELDS.index(name)
 
-    # ── core sampling ────────────────────────────────────────────────────
+    # 鈹€鈹€ core sampling 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def _sample_fields(self):
         """Sample one row of [F] field values preserving covariance."""
-        assert self._fitted, "call fit() first"
+        if not self._fitted:
+            raise RuntimeError("call fit() first")
         z = self._np_rng.normal(size=self._n_fields)
         z_corr = self._L @ z
         x_raw = self._means + z_corr * self._stds
@@ -456,7 +455,7 @@ class BaselineCalibrator:
     def _make_agent_ids(self, n):
         return [f"agent_{i}" for i in range(n)]
 
-    # ── interaction graph builders ───────────────────────────────────────
+    # 鈹€鈹€ interaction graph builders 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def _build_interactions(self, topology: str, agent_ids, rng, fields_list=None):
         """Build interaction list for the given topology.
@@ -513,7 +512,7 @@ class BaselineCalibrator:
             "_topology": topology,
         }
 
-    # ── public generators ────────────────────────────────────────────────
+    # 鈹€鈹€ public generators 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def generate_normal(self, topology: Optional[str] = None,
                         num: int = 100) -> list:
@@ -651,7 +650,7 @@ class BaselineCalibrator:
                         )
 
                     obs["label"] = 1
-                    obs["_anomaly_target"] = f"{target}↔{','.join(new_partners)}"
+                    obs["_anomaly_target"] = f"{target}鈫攞','.join(new_partners)}"
                     obs["_anomaly_type"] = "topology_anomaly"
                 else:
                     DataRecorder._inject_anomaly(
@@ -670,7 +669,7 @@ class BaselineCalibrator:
                      num, severity, anomaly_types)
         return result
 
-    # ── dataset export ───────────────────────────────────────────────────
+    # 鈹€鈹€ dataset export 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def generate_dataset(self, topology: Optional[str] = None,
                          num_normal: int = 500, num_anomaly: int = 100,
@@ -737,7 +736,7 @@ class BaselineCalibrator:
         return meta
 
 
-# ── CLI ─────────────────────────────────────────────────────────────────────
+# 鈹€鈹€ CLI 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 def main():
     import argparse

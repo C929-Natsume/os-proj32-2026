@@ -64,7 +64,7 @@ class RedisCollector(BaseCollector):
     def _get_all_agent_ids(self):
         members = self._client.smembers("inter:agents")
         if not members:
-            return list(range(4))
+            return ["agent_0", "agent_1", "agent_2", "agent_3"]
         return sorted(members)
 
     def _read_agent_metrics(self, agent_id):
@@ -104,18 +104,17 @@ class RedisCollector(BaseCollector):
 
     def _read_ssl_metrics(self):
         """Read SSL edge data and return per-agent SSL counters."""
-        edge_keys = self._client.smembers("inter:edges") or set()
         ssl_metrics = {}
-        for ek in edge_keys:
-            if not ek.endswith(":ssl"):
-                continue
-            agent_id = ek[:-4]  # strip ":ssl" suffix
-            data = self._client.hgetall(f"inter:edge:{agent_id}:ssl")
-            if data:
-                ssl_metrics[agent_id] = {
-                    "ssl_msg_count": int(data.get("total_messages", 0)),
-                    "ssl_total_bytes": int(data.get("total_bytes", 0)),
-                }
+        for key in self._client.scan_iter(match="inter:edge:*:ssl"):
+            parts = key.split(":")
+            if len(parts) == 4 and parts[3] == "ssl":
+                agent_id = parts[2]
+                data = self._client.hgetall(key)
+                if data:
+                    ssl_metrics[agent_id] = {
+                        "ssl_msg_count": int(data.get("total_messages", 0)),
+                        "ssl_total_bytes": int(data.get("total_bytes", 0)),
+                    }
         return ssl_metrics
 
     def _read_edges(self):
@@ -151,6 +150,7 @@ class RedisCollector(BaseCollector):
                 "inter:messages", count=self._message_limit
             )
         except Exception:
+            logger.warning("Redis xrevrange inter:messages failed", exc_info=True)
             return []
         msgs = []
         for msg_id, fields in raw:
@@ -173,6 +173,7 @@ class RedisCollector(BaseCollector):
                 "inter:anomalies", count=self._anomaly_limit
             )
         except Exception:
+            logger.warning("Redis xrevrange inter:anomalies failed", exc_info=True)
             return []
         anomalies = []
         for anom_id, fields in raw:

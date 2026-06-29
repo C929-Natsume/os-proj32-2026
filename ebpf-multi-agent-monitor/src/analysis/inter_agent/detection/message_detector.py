@@ -22,6 +22,11 @@ class MessageAnomalyDetector:
         self._baseline_size: Dict[Tuple[str, str], float] = defaultdict(float)
         self._baseline_samples = 0
 
+    def clear(self):
+        self._baseline.clear()
+        self._baseline_size.clear()
+        self._baseline_samples = 0
+
     def update_baseline(self, obs: dict):
         messages = obs.get("messages", [])
         for m in messages:

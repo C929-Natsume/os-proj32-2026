@@ -4,7 +4,7 @@ import json, sys, os, time, torch
 import numpy as np
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.dirname(BASE))
+sys.path.insert(0, BASE)
 
 from inter_agent.detection.gnn_detector import DOMINANT, AnomalyClassifier, extract_features
 from inter_agent.detection.semantic_rule_checker import SemanticRuleChecker

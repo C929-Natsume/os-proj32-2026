@@ -37,10 +37,10 @@ except ImportError:
 
 from inter_agent.data.simulator import Simulator
 from inter_agent.data.text_encoder import ContentFeatureExtractor, DEFAULT_CONTENT_DIM
+from inter_agent.data.features import extract_node_features, extract_edge_attributes, NODE_FEATURE_DIM
 from inter_agent.graph.builder import AgentInteractionGraph
 from inter_agent.detection.gnn_detector import (
     DOMINANT, AnomalyClassifier, build_adjacency_matrix,
-    extract_edge_attr,
 )
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -56,7 +56,7 @@ def observation_to_pyg(obs: dict, content_extractor=None):
     Returns (x, edge_index, edge_attr, node_labels) where:
       x: node features [N, 14] (no content) or [N, 22] (with content)
       edge_index: [2, E]
-      edge_attr: [E, 4] — onehot type(3) + weight
+      edge_attr: [E, 6] — onehot type(3) + weight + data_size_norm + msg_count_norm
       node_labels: [N] — 1 for anomalous agent, 0 otherwise
     """
     agents_data = obs.get("agents", {})
@@ -65,79 +65,33 @@ def observation_to_pyg(obs: dict, content_extractor=None):
     n = len(agent_ids)
     aid_to_idx = {aid: i for i, aid in enumerate(agent_ids)}
 
-    use_content = content_extractor is not None
-    content_dim = getattr(content_extractor, 'content_dim', DEFAULT_CONTENT_DIM) if use_content else 0
-    dim = 14 + content_dim
+    x_np = extract_node_features(agents_data, agent_ids, interactions)
+    if content_extractor is not None:
+        from inter_agent.data.text_encoder import DEFAULT_CONTENT_DIM
+        content_feats = content_extractor.extract(
+            agents_data, agent_ids, interactions, obs.get("messages"))
+        if any(aid in content_feats for aid in agent_ids):
+            dim = NODE_FEATURE_DIM + DEFAULT_CONTENT_DIM
+            x_ext = np.zeros((n, dim), dtype=np.float32)
+            x_ext[:, :NODE_FEATURE_DIM] = x_np
+            for aid, i in aid_to_idx.items():
+                if aid in content_feats:
+                    cf = content_feats[aid]
+                    for k in range(min(len(cf), DEFAULT_CONTENT_DIM)):
+                        x_ext[i, NODE_FEATURE_DIM + k] = min(float(cf[k]), 1.0)
+            x_np = x_ext
+    x = torch.from_numpy(x_np).float()
 
-    content_feats = {}
-    if use_content:
-        content_feats = content_extractor.extract(agents_data, agent_ids, interactions, obs.get("messages"))
-
-    x = torch.zeros((n, dim), dtype=torch.float)
-    for aid, i in aid_to_idx.items():
-        info = agents_data[aid]
-        cpu = float(info.get("cpu_usage", 0))
-        mem = float(info.get("memory_usage", 0))
-        api = float(info.get("api_call_count", 0))
-        msg_s = float(info.get("msg_sent", 0))
-        msg_r = float(info.get("msg_received", 0))
-        msg = msg_s + msg_r
-        shell = float(info.get("shell_exec_count", 0))
-        sensitive = float(info.get("sensitive_file_count", 0))
-        fs_r = float(info.get("fs_read_count", 0))
-        fs_w = float(info.get("fs_write_count", 0))
-        io_total = fs_r + fs_w
-        uf = float(info.get("unique_files_count", 0))
-        fs_open = float(info.get("fs_open_count", 0))
-        proc_exec = float(info.get("proc_exec_count", 0))
-        net_conn = float(info.get("net_connect_count", 0))
-
-        # Magnitude features (8 dims)
-        x[i, 0] = min(cpu, 1.0)
-        x[i, 1] = min(mem, 1.0)
-        x[i, 2] = min(api / 100.0, 1.0)
-        x[i, 3] = min(msg / 100.0, 1.0)
-        x[i, 4] = min(shell, 1.0)
-        x[i, 5] = min(sensitive, 1.0)
-        x[i, 6] = min(io_total / 200.0, 1.0)
-        x[i, 7] = min(uf / 10.0, 1.0)
-
-        # Ratio features (6 dims)
-        x[i, 8] = min(msg / (api + 1.0), 2.0) / 2.0
-        x[i, 9] = min(io_total / (fs_open + 1.0), 5.0) / 5.0
-        x[i,10] = min(shell / (proc_exec + 1.0), 1.0)
-        x[i,11] = min(sensitive / (fs_open + 1.0), 1.0)
-        x[i,12] = abs(msg_s - msg_r) / (msg + 1.0)
-        net_total = net_conn + msg
-        x[i,13] = min(net_total / (fs_open + proc_exec + 1.0), 3.0) / 3.0
-
-        # Content features (8 dims) — only when content_extractor provided
-        if aid in content_feats:
-            cf = content_feats[aid]
-            for k in range(8):
-                x[i, 14 + k] = min(float(cf[k]), 1.0)
-
-    edge_list = []
-    edge_attr_list = []
-    type_map = {"message": 0, "api_call": 1, "file_share": 2, "bypass": 1}
-    for it in interactions:
-        i, j = aid_to_idx.get(it["src"]), aid_to_idx.get(it["dst"])
-        if i is not None and j is not None:
-            edge_list.append([i, j])
-            t = type_map.get(it.get("type", "message"), 0)
-            w = float(it.get("weight", 0.5))
-            ds = float(it.get("data_size", 0)) / 8192.0
-            mc = float(it.get("msg_count", 0)) / 100.0
-            onehot = [0.0, 0.0, 0.0]
-            onehot[t] = 1.0
-            edge_attr_list.append(onehot + [w, min(ds, 1.0), min(mc, 1.0)])
-
+    edge_attr_np = extract_edge_attributes(interactions, aid_to_idx)
+    edge_list = [[aid_to_idx[it["src"]], aid_to_idx[it["dst"]]]
+                 for it in interactions
+                 if it["src"] in aid_to_idx and it["dst"] in aid_to_idx]
     if not edge_list:
         edge_index = torch.zeros((2, 0), dtype=torch.long)
         edge_attr = torch.zeros((0, 6), dtype=torch.float)
     else:
-        edge_index = torch.tensor(edge_list, dtype=torch.long).t()
-        edge_attr = torch.tensor(edge_attr_list, dtype=torch.float)
+        edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
+        edge_attr = torch.from_numpy(edge_attr_np).float() if edge_attr_np is not None else torch.zeros((0, 6), dtype=torch.float)
 
     target = obs.get("_anomaly_target", None)
     node_labels = torch.zeros(n, dtype=torch.float)

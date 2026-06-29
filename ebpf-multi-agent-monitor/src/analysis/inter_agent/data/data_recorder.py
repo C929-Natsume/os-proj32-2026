@@ -1,7 +1,7 @@
-"""Redis data recorder — polls RedisCollector and saves real eBPF observations.
+﻿"""Redis data recorder 鈥?polls RedisCollector and saves real eBPF observations.
 
 Captures normal agent behavior from the live Redis pipeline (fed by
-eBPF → ringbuf_handler → redis_shipper) into JSON Lines files for
+eBPF 鈫?ringbuf_handler 鈫?redis_shipper) into JSON Lines files for
 later training dataset construction.
 
 Usage:
@@ -104,7 +104,7 @@ class DataRecorder:
         start_ts = time.time()
         count = 0
 
-        logger.info("Recording started → %s (%d seconds, inject_rate=%.2f)",
+        logger.info("Recording started 鈫?%s (%d seconds, inject_rate=%.2f)",
                      output, duration, inject_rate)
 
         while time.time() - start_ts < duration:
@@ -160,7 +160,7 @@ class DataRecorder:
             time.sleep(self._window_seconds)
 
         elapsed = time.time() - start_ts
-        logger.info("Recording done: %d observations in %.1fs → %s",
+        logger.info("Recording done: %d observations in %.1fs 鈫?%s",
                      count, elapsed, output)
         return count
 
@@ -193,7 +193,7 @@ class DataRecorder:
             agent["cpu_usage"] = round(max(base_cpu, cpu_max), 3)
             agent["memory_usage"] = round(max(base_mem, mem_max), 3)
             agent["proc_fork_count"] = int(agent.get("proc_fork_count", 0)) + int(rng.randint(*s["fork"]))
-            risk = round(rng.uniform(0.5 + 0.4 * s["step"], 1.0 * s["step"]), 3)
+            risk = round(rng.uniform(0.5 + 0.3 * s["step"], 0.8 + 0.2 * s["step"]), 3)
             obs["anomalies"].append({
                 "agent_id": target, "rule": "RESOURCE_EXHAUSTION",
                 "severity": "HIGH" if severity == "severe" else severity.upper(),
@@ -206,7 +206,7 @@ class DataRecorder:
             agent["shell_exec_count"] = int(agent.get("shell_exec_count", 0)) + int(rng.randint(*s["shell"]))
             agent["sensitive_file_count"] = int(agent.get("sensitive_file_count", 0)) + int(rng.randint(*s["sensitive"]))
             agent["proc_exec_count"] = int(agent.get("proc_exec_count", 0)) + int(rng.randint(*s["proc"]))
-            risk = round(rng.uniform(0.6 + 0.3 * s["step"], 1.0 * s["step"]), 3)
+            risk = round(rng.uniform(0.5 + 0.3 * s["step"], 0.8 + 0.2 * s["step"]), 3)
             obs["anomalies"].append({
                 "agent_id": target, "rule": "UNEXPECTED_SHELL_EXEC",
                 "severity": "HIGH" if severity == "severe" else severity.upper(),
@@ -231,8 +231,8 @@ class DataRecorder:
         elif anom_type == "message_surge":
             agent["msg_sent"] = int(agent.get("msg_sent", 0)) + int(rng.randint(*s["msg"]))
             agent["msg_received"] = int(agent.get("msg_received", 0)) + int(rng.randint(*s["msg"]))
-            # Deliberately do NOT increase api_call_count — breaks normal
-            # correlation (msg↔api), making the anomaly more detectable.
+            # Deliberately do NOT increase api_call_count 鈥?breaks normal
+            # correlation (msg鈫攁pi), making the anomaly more detectable.
             risk = round(rng.uniform(0.4 + 0.3 * s["step"], 0.7 + 0.3 * s["step"]), 3)
             obs["anomalies"].append({
                 "agent_id": target, "rule": "MESSAGE_STORM",
