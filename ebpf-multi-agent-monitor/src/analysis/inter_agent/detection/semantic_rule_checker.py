@@ -228,8 +228,11 @@ class SemanticRuleChecker:
 
     @staticmethod
     def _rule_supervisor_bypass(agents: dict, messages: list, interactions: list,
-                                  agent_ids: List[str]) -> Dict[str, float]:
+                                  agent_ids: List[str],
+                                  topology: str = "unknown") -> Dict[str, float]:
         """Agent-agent bypass edges (type=bypass) between worker agents."""
+        if topology != "hierarchical":
+            return {}
         aid_set = set(agent_ids)
         for it in interactions:
             src = it.get("src", "")
@@ -334,13 +337,18 @@ class SemanticRuleChecker:
         agent_ids = list(agents_data.keys())
         messages = obs.get("messages", [])
         interactions = obs.get("interactions", [])
+        topology = obs.get("_topology", "unknown")
 
         all_agent_scores: Dict[str, float] = {}
         types_found: Dict[str, Dict[str, float]] = {}
 
         for type_name, rule_fn in self.RULES:
             try:
-                per_agent = rule_fn(agents_data, messages, interactions, agent_ids)
+                if type_name == "supervisor_bypass":
+                    per_agent = rule_fn(agents_data, messages, interactions,
+                                        agent_ids, topology=topology)
+                else:
+                    per_agent = rule_fn(agents_data, messages, interactions, agent_ids)
             except Exception as e:
                 logger.warning("Rule %s raised: %s", type_name, e)
                 per_agent = {}
@@ -369,6 +377,7 @@ class SemanticRuleChecker:
         agent_ids = list(agents_data.keys())[:16]
         messages = obs.get("messages", [])
         interactions = obs.get("interactions", [])
+        topology = obs.get("_topology", "unknown")
         evidence = {}
 
         # Data-driven evidence field extractors keyed by type_name
@@ -376,7 +385,14 @@ class SemanticRuleChecker:
         evidence_spec = {
             "stale_state": lambda info: {
                 "fs_unlink": info.get("fs_unlink_count", 0),
-                "fs_write": info.get("fs_write_count", 0)},
+                "fs_write": info.get("fs_write_count", 0),
+                "cpu": info.get("cpu_usage", 0.5),
+                "memory": info.get("memory_usage", 0.5),
+                "api_call": info.get("api_call_count", 5),
+                "mode": ("zero_activity" if (info.get("cpu_usage", 0.5) == 0
+                          and info.get("memory_usage", 0.5) == 0
+                          and info.get("api_call_count", 5) == 0)
+                         else "file_deletion")},
             "state_conflict": lambda info: {
                 "fs_write": info.get("fs_write_count", 0),
                 "api_call": info.get("api_call_count", 0),
@@ -427,11 +443,26 @@ class SemanticRuleChecker:
             "group_split": lambda info: {"interactions": len(interactions)},
             "flood_from_single": lambda info: {"interactions": len(interactions)},
             "message_storm": lambda info: {"msg_received": info.get("msg_received", 0)},
+            "resource": lambda info: {
+                "cpu": info.get("cpu_usage", 0),
+                "memory": info.get("memory_usage", 0)},
+            "security": lambda info: {
+                "shell_exec": info.get("shell_exec_count", 0),
+                "sensitive_file": info.get("sensitive_file_count", 0)},
+            "propagation": lambda info: {},
+            "frequency_surge": lambda info: {"src": "", "freq": 0},
+            "cascade_storm": lambda info: {},
+            "data_size_anomaly": lambda info: {"data_size": 0},
+            "intra_agent_alert": lambda info: {"src": "", "risk": 0},
         }
 
         for type_name, rule_fn in self.RULES:
             try:
-                per_agent = rule_fn(agents_data, messages, interactions, agent_ids)
+                if type_name == "supervisor_bypass":
+                    per_agent = rule_fn(agents_data, messages, interactions,
+                                        agent_ids, topology=topology)
+                else:
+                    per_agent = rule_fn(agents_data, messages, interactions, agent_ids)
             except Exception as e:
                 logger.debug("get_evidence rule %s: %s", type_name, e)
                 per_agent = {}
@@ -449,7 +480,10 @@ class SemanticRuleChecker:
         return evidence
 
     ROOT_CAUSE_MAP = {
-        "stale_state": "fs_unlink={fs_unlink} file deletions detected while agent was active — may indicate operating on outdated file state",
+        "stale_state": {
+            "zero_activity": "Agent idle (cpu=0, memory=0, api_calls=0) — zero activity, state may be stale",
+            "file_deletion": "fs_unlink={fs_unlink} file deletions — may indicate operating on outdated file state",
+        },
         "state_conflict": "Agent claimed exclusive access on a shared resource, but another agent also wrote to the same resource concurrently — state inconsistency between agents",
         "partial_visibility": "Agent reported limited file visibility (fs_open={fs_open}, unique_files={unique_files}), but should have had broader access",
         "message_disorder": "Message order violation: a reply timestamp precedes its request timestamp — causal relationship broken",
@@ -464,13 +498,25 @@ class SemanticRuleChecker:
         "group_split": "Agents split into subgroups with cross-group communication at low weights — group fragmentation detected",
         "flood_from_single": "Single agent sent interactions to 3+ distinct targets — flood from single source detected",
         "message_storm": "Agent received excessive messages (msg_received={msg_received}) — message storm detected",
+        "resource": "Agent resource usage critically high (cpu={cpu}, memory={memory}) — resource exhaustion detected",
+        "security": "Agent performed security-sensitive operations (shell_exec={shell_exec}, sensitive_file={sensitive_file}) — security anomaly detected",
+        "propagation": "Anomaly propagated through agents via interaction chain — propagation path detected",
+        "frequency_surge": "Message frequency anomaly from agent — frequency surge detected",
+        "cascade_storm": "Cascade storm propagated to multiple agents — cascade anomaly detected",
+        "data_size_anomaly": "Message data size anomaly ({data_size} bytes) — exceeds normal threshold",
+        "intra_agent_alert": "Intra-agent behavior deviation detected — internal anomaly",
     }
 
     def get_root_cause(self, anom_type: str, evidence: dict) -> str:
         """Return human-readable root cause description."""
-        if anom_type not in self.ROOT_CAUSE_MAP:
+        entry = self.ROOT_CAUSE_MAP.get(anom_type)
+        if entry is None:
             return f"Anomaly type '{anom_type}' detected by rule system"
-        template = self.ROOT_CAUSE_MAP[anom_type]
+        if isinstance(entry, dict):
+            mode = evidence.get("mode", "file_deletion")
+            template = entry.get(mode, entry["file_deletion"])
+        else:
+            template = entry
         try:
             return template.format(**evidence)
         except KeyError:

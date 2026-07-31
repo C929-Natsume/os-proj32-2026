@@ -50,11 +50,11 @@ def inject_flood_from_single(obs, aids, **kw):
     dsts = [a for a in aids if a != src]
     if len(dsts) < 2:
         raise ValueError("flood_from_single needs >= 3 agents")
-    for dst in dsts:
-        for _ in range(5):
+    for idx, dst in enumerate(dsts):
+        for j in range(5):
             obs.setdefault("messages", []).append({
                 "src": src, "dst": dst, "msg_type": "request",
-                "data_size": 128,
+                "data_size": 128, "content": f"flood_msg_{idx}_{j}",
                 "timestamp_ns": obs.get("timestamp", 0)})
     if src in obs.setdefault("agents", {}):
         obs["agents"][src]["msg_sent"] = obs["agents"][src].get("msg_sent", 0) + 5 * len(aids)

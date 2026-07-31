@@ -39,6 +39,12 @@ MAX_CONTENT_TRUNCATE_LEN = 160
 SUPPLEMENTAL_SEVERITY_RISK = 1.0
 SCORE_BOOST_FACTOR = 0.8
 DEFAULT_ANOMALY_RISK = 0.3
+MAX_SAME_TYPE_ENTRIES = 3
+VIEW_SMALL_MAX_AGENTS = 6
+VIEW_SMALL_MAX_EDGES = 16
+VIEW_EDGE_LIST_LIMIT = 12
+VIEW_LINE_MAX = 90
+ROLE_UNKNOWN = "unknown"
 # ─────────────────────────────────────────────────────────────────
 
 
@@ -413,6 +419,7 @@ class MonitorAgent:
         self._interaction_graph.clear()
         self._temporal_detector.clear()
         self._message_detector.clear()
+        self._logged_supplemental_types.clear()
 
     # ── Log formatting (human-readable) ─────────────────────────────────
 
@@ -448,12 +455,21 @@ class MonitorAgent:
             if src in agent_ids:
                 try:
                     raw = m.get("data", "")
-                    try:
-                        text = base64.b64decode(raw).decode("utf-8")[:MAX_EVENT_TEXT_LEN]
-                    except UnicodeDecodeError:
-                        text = f"[bin:{raw[:BIN_PREVIEW_LEN]}...]"
-                    if not text or not any(c.isalpha() for c in text[:MIN_ALPHA_CHECK]):
-                        text = (raw[:RAW_PREVIEW_LEN] + "...") if raw else "..."
+                    content = m.get("content", "")
+                    if raw:
+                        try:
+                            text = base64.b64decode(raw).decode("utf-8")[:MAX_EVENT_TEXT_LEN]
+                        except (UnicodeDecodeError, ValueError):
+                            text = f"[bin:{raw[:BIN_PREVIEW_LEN]}...]"
+                        if not text or not any(c.isalpha() for c in text[:MIN_ALPHA_CHECK]):
+                            if content:
+                                text = content[:MAX_EVENT_TEXT_LEN]
+                            else:
+                                text = (raw[:RAW_PREVIEW_LEN] + "...") if raw else "..."
+                    elif content:
+                        text = content[:MAX_EVENT_TEXT_LEN]
+                    else:
+                        text = "..."
                 except Exception:
                     logger.exception("decode msg data")
                     text = (raw[:RAW_PREVIEW_LEN] + "...") if raw else "..."
@@ -500,6 +516,123 @@ class MonitorAgent:
                     }
         return {}
 
+    _ROLE_DUTY = {
+        "Supervisor": "delegate tasks to workers",
+        "Worker": "execute assigned tasks",
+        "Peer": "collaborate to solve problems",
+    }
+
+    def _derive_roles(self, obs: dict, agent_ids: list,
+                      interactions: list) -> tuple:
+        roles = {}
+        explicit = obs.get("_roles")
+        if isinstance(explicit, dict) and explicit:
+            for aid in agent_ids:
+                roles[aid] = str(explicit.get(aid, ROLE_UNKNOWN)).capitalize()
+        else:
+            topo = obs.get("_topology", "unknown")
+            if topo == "hierarchical":
+                out_targets = {aid: set() for aid in agent_ids}
+                for it in interactions:
+                    src, dst = it.get("src"), it.get("dst")
+                    if src in out_targets and dst:
+                        out_targets[src].add(dst)
+                sup = max(agent_ids,
+                          key=lambda a: (len(out_targets[a]),
+                                         -agent_ids.index(a))) if agent_ids else None
+                for aid in agent_ids:
+                    roles[aid] = "Supervisor" if aid == sup else "Worker"
+            elif topo in ("peer-to-peer", "chain", "tree", "ring",
+                          "scale_free", "random"):
+                for aid in agent_ids:
+                    roles[aid] = "Peer"
+            else:
+                for aid in agent_ids:
+                    roles[aid] = ROLE_UNKNOWN
+        resp = {}
+        for aid in agent_ids:
+            duty = self._ROLE_DUTY.get(roles.get(aid, ""), "")
+            if duty:
+                resp[roles[aid]] = duty
+        return roles, resp
+
+    def _build_edge_rows(self, obs: dict, agent_ids: list) -> list:
+        from collections import defaultdict
+        agg = defaultdict(lambda: {"total": 0, "types": {},
+                                   "weight": 0.0, "data_size": 0})
+
+        def merge(src, dst, etype, weight, count, data_size):
+            if src not in agent_ids:
+                return
+            a = agg[(src, dst)]
+            n = max(1, int(count or 0))
+            a["total"] += n
+            a["types"][etype or "message"] = \
+                a["types"].get(etype or "message", 0) + n
+            if weight:
+                a["weight"] = max(a["weight"], float(weight))
+            a["data_size"] += int(data_size or 0)
+
+        for it in obs.get("interactions", []):
+            merge(it.get("src"), it.get("dst"), it.get("type"),
+                  it.get("weight"), it.get("msg_count"),
+                  it.get("data_size"))
+        if not agg:
+            for m in obs.get("messages", []):
+                merge(m.get("src"), m.get("dst"), m.get("msg_type", "message"),
+                      0.5, 1, m.get("data_size"))
+        rows = []
+        for (s, d), a in sorted(agg.items()):
+            dom_type = max(a["types"], key=lambda t: a["types"][t])
+            rows.append({"src": s, "dst": d, "etype": dom_type,
+                         "weight": a["weight"], "count": a["total"],
+                         "data_size": a["data_size"]})
+        return rows
+
+    def _clip(self, s: str) -> str:
+        if len(s) <= VIEW_LINE_MAX:
+            return s
+        return s[:VIEW_LINE_MAX - 3] + "..."
+
+    def _render_ascii_view(self, agent_ids: list, roles: dict,
+                           edge_rows: list) -> str:
+        from collections import defaultdict
+        by_src = defaultdict(list)
+        for r in edge_rows:
+            by_src[r["src"]].append(r)
+        lines = []
+        for aid in agent_ids:
+            role = roles.get(aid, ROLE_UNKNOWN)
+            duty = self._ROLE_DUTY.get(role, "")
+            node_label = f"[{aid}] {role}"
+            if duty:
+                node_label += f" — {duty}"
+            lines.append(self._clip(node_label))
+            edges = by_src.get(aid, [])
+            for i, e in enumerate(edges):
+                branch = "└─" if i == len(edges) - 1 else "├─"
+                el = (f"{branch}({e['etype']} w={e['weight']:.2f} "
+                      f"x{e['count']})─> [{e['dst']}]")
+                lines.append(" " + self._clip(el))
+        return "\n".join(lines)
+
+    def _format_edge_list(self, edge_rows: list, roles: dict) -> list:
+        if not edge_rows:
+            return ["(no edges)"]
+        lines = []
+        shown = min(len(edge_rows), VIEW_EDGE_LIST_LIMIT)
+        for e in edge_rows[:shown]:
+            src_role = roles.get(e["src"], "")
+            dst_role = roles.get(e["dst"], "")
+            src_lbl = f"{e['src']}({src_role})" if src_role else e["src"]
+            dst_lbl = f"{e['dst']}({dst_role})" if dst_role else e["dst"]
+            line = (f"{src_lbl} -({e['etype']} w={e['weight']:.2f} "
+                    f"x{e['count']})-> {dst_lbl}")
+            lines.append(self._clip(line))
+        if len(edge_rows) > shown:
+            lines.append(f"... (+{len(edge_rows) - shown} more edges)")
+        return lines
+
     def _analyze_view(self, obs: dict, atype: str) -> dict:
         agents = obs.get("agents", {})
         n = len(agents)
@@ -510,11 +643,26 @@ class MonitorAgent:
         agents_str = ", ".join(agent_list[:MAX_AGENTS_TO_LIST])
         if n > MAX_AGENTS_TO_LIST:
             agents_str += f" ...(+{n-MAX_AGENTS_TO_LIST})"
+
+        roles, resp = self._derive_roles(obs, agent_list, interactions)
+        edge_rows = self._build_edge_rows(obs, agent_list)
+        edge_lines = self._format_edge_list(edge_rows, roles)
+
+        use_ascii = (0 < n <= VIEW_SMALL_MAX_AGENTS
+                     and m <= VIEW_SMALL_MAX_EDGES)
+        ascii_view = (self._render_ascii_view(agent_list, roles, edge_rows)
+                      if use_ascii else None)
+
         return {
             "topology": topo,
             "agents": n,
             "edges": m,
             "agent_list": agents_str,
+            "roles": roles,
+            "responsibilities": resp,
+            "edge_rows": edge_rows,
+            "ascii": ascii_view,
+            "edge_lines": edge_lines,
         }
 
     def _format_anomaly_log(self, report, obs: dict) -> str:
@@ -532,10 +680,11 @@ class MonitorAgent:
 
         sem_types = report.semantic_result.get("anomaly_types", []) if report.semantic_result else []
         obs_type = obs.get("_anomaly_type", "") if isinstance(obs, dict) else ""
-        first_type = sem_types[0] if sem_types else (obs_type if obs_type and obs_type != "normal" else "unknown")
-        other_types = [t for t in sem_types[1:] if t != first_type]
+        first_type = obs_type if obs_type and obs_type != "normal" else (sem_types[0] if sem_types else "unknown")
+        other_types = [t for t in sem_types if t != first_type]
 
         seen = set()
+        type_count = {}
         dup_count = 0
         for aid in report.anomalous_nodes:
             gnn_scores = report.gnn_risks
@@ -550,12 +699,26 @@ class MonitorAgent:
             severity = "HIGH" if risk >= SEVERITY_HIGH_THRESHOLD else ("MEDIUM" if risk >= SEVERITY_MEDIUM_THRESHOLD
                                                                          else "LOW")
 
+            group_key = (atype, module, severity)
+            type_count[group_key] = type_count.get(group_key, 0) + 1
+            if type_count[group_key] > MAX_SAME_TYPE_ENTRIES:
+                dup_count += 1
+                continue
+
             ev = evidence.get(aid, {}).get(atype, {})
             try:
                 if ev:
                     cause = self._semantic_rule_checker.get_root_cause(atype, ev)
                 else:
-                    cause = f"Anomaly type '{atype}' detected on {aid}"
+                    info = obs.get("agents", {}).get(aid, {})
+                    if atype == "resource" and info:
+                        ev = {"cpu": info.get("cpu_usage", 0), "memory": info.get("memory_usage", 0)}
+                        cause = self._semantic_rule_checker.get_root_cause(atype, ev)
+                    elif atype == "security" and info:
+                        ev = {"shell_exec": info.get("shell_exec_count", 0), "sensitive_file": info.get("sensitive_file_count", 0)}
+                        cause = self._semantic_rule_checker.get_root_cause(atype, ev)
+                    else:
+                        cause = f"Anomaly type '{atype}' detected on {aid}"
             except Exception:
                 logger.exception("get_root_cause failed for %s/%s", aid, atype)
                 cause = f"Anomaly type '{atype}' detected on {aid}"
@@ -570,7 +733,7 @@ class MonitorAgent:
             self._write_entry(lines, module, atype, severity, risk, aid,
                               cause, obs, agent_ids, ts, is_sem)
         if dup_count:
-            lines.append(f"  ... and {dup_count} duplicate alerts suppressed")
+            lines.append(f"  ... and {dup_count} additional alerts suppressed")
 
         # Supplementary entries for non-dominant detected types
         for atype in other_types:
@@ -607,7 +770,8 @@ class MonitorAgent:
         if ebpf_pid:
             lines.append(f"agent={aid}  ebpf={ebpf_pid}")
         lines.append("-" * LINE_SEPARATOR_LEN)
-        events = self._collect_events(obs, agent_ids)
+        events = self._collect_events(obs, agent_ids, num=MAX_EVENTS_DISPLAY + 1)
+        total_event_count = len(obs.get("messages", [])) + len(obs.get("interactions", []))
         lines.append("[event sequence]")
         for e in events[:MAX_EVENTS_DISPLAY]:
             detail = (e["detail"][:DETAIL_TRUNCATE_LEN] + "...") if len(
@@ -616,6 +780,9 @@ class MonitorAgent:
                 lines.append(f'  - {e["agent"]}  {e["op"]} -> {e["target"]}  "{detail}"')
             else:
                 lines.append(f"  - {e['agent']}  {e['op']} -> {e['target']}")
+        total_shown = min(len(events), MAX_EVENTS_DISPLAY)
+        if total_event_count > total_shown:
+            lines.append(f"  ... (+{total_event_count - total_shown} more events truncated)")
         if is_sem:
             ctx = self._build_semantic_context(obs, atype, aid)
             if ctx:
@@ -632,6 +799,25 @@ class MonitorAgent:
                      f"  edges={view['edges']}")
         if view['agent_list']:
             lines.append(f"  agents: {view['agent_list']}")
+        roles = view.get("roles") or {}
+        if roles:
+            role_parts = [f"{a}={roles[a]}" for a in sorted(roles)]
+            if len(role_parts) > MAX_AGENTS_TO_LIST:
+                role_parts = role_parts[:MAX_AGENTS_TO_LIST] + ["..."]
+            lines.append("  roles: " + ", ".join(role_parts))
+        resp = view.get("responsibilities") or {}
+        if resp:
+            resp_parts = [f"{r}={d}" for r, d in resp.items() if d]
+            if resp_parts:
+                lines.append("  responsibilities: "
+                             + "; ".join(resp_parts))
+        ascii_view = view.get("ascii")
+        if ascii_view:
+            for ln in ascii_view.split("\n"):
+                lines.append("  " + ln)
+        lines.append("  edges:")
+        for ln in view.get("edge_lines", []):
+            lines.append("  " + ln)
         lines.append("=" * LINE_SEPARATOR_LEN)
         lines.append("")
 

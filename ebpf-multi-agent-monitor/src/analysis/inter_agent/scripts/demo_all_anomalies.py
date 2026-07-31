@@ -30,14 +30,11 @@ def get_real_observation(live=False):
         obs = collector.get_observation()
         if not obs.get("agents"):
             raise RuntimeError("No agents in Redis 鈥?is eBPF + AutoGen running?")
-        # Override all metrics with SAFE_METRICS for clean rule/GNN baseline;
-        # interactions/messages cleared to prevent message detector false alarms.
+        # Override all metrics with SAFE_METRICS for clean rule/GNN baseline.
         for aid in obs.get("agents", {}):
             ad = obs["agents"][aid]
             for key, val in SAFE_METRICS.items():
                 ad[key] = val
-        obs["interactions"] = []
-        obs["messages"] = []
         return obs
 
     # Fallback: use stored normal observation
@@ -56,8 +53,6 @@ def get_real_observation(live=False):
                 ad = obs["agents"][aid]
                 for key, val in SAFE_METRICS.items():
                     ad[key] = val
-            obs["interactions"] = []
-            obs["messages"] = []
             return obs
     raise RuntimeError("No suitable normal observation found")
 

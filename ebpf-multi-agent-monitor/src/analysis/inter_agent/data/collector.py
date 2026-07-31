@@ -163,6 +163,7 @@ class RedisCollector(BaseCollector):
                 "timestamp_ns": int(entry.get("timestamp_ns", 0)),
                 "protocol": entry.get("protocol", ""),
                 "data": entry.get("data", ""),
+                "content": entry.get("content", ""),
                 "peer_agent": entry.get("peer_agent", ""),
             })
         return msgs

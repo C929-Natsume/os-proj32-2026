@@ -35,14 +35,11 @@ def _read_observation(data_list, idx, live=False):
             return None
         obs["label"] = 0
         obs["_topology"] = obs.get("_topology", "unknown")
-        # Override all metrics with SAFE_METRICS for clean rule/GNN baseline;
-        # interactions/messages cleared to prevent message detector false alarms.
+        # Override all metrics with SAFE_METRICS for clean rule/GNN baseline.
         for aid in obs.get("agents", {}):
             ad = obs["agents"][aid]
             for key, val in SAFE_METRICS.items():
                 ad[key] = val
-        obs["interactions"] = []
-        obs["messages"] = []
         return obs
 
     # Cycled from stored data
@@ -53,8 +50,6 @@ def _read_observation(data_list, idx, live=False):
         ad = obs["agents"][aid]
         for key, val in SAFE_METRICS.items():
             ad[key] = val
-    obs["interactions"] = []
-    obs["messages"] = []
     return obs
 
 
