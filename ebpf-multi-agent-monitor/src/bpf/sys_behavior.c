@@ -13,7 +13,7 @@
 
 static struct sys_behavior_bpf *sys_skel = NULL;
 
-int setup_sys_behavior(void) {
+int setup_sys_behavior(int enable_behavioral) {
     int err;
 
     printf("[SYS_BEHAVIOR] 正在加载内核监控探针...\n");
@@ -22,6 +22,12 @@ int setup_sys_behavior(void) {
         fprintf(stderr, "[SYS_BEHAVIOR] Failed to open and load BPF skeleton\n");
         return -1;
     }
+
+    __u32 key = 0;
+    __u8 val = enable_behavioral ? 1 : 0;
+    bpf_map_update_elem(
+        bpf_map__fd(sys_skel->maps.behavioral_discovery_enabled),
+        &key, &val, BPF_ANY);
 
     err = sys_behavior_bpf__attach(sys_skel);
     if (err) {
@@ -63,6 +69,12 @@ int setup_sys_behavior(void) {
     }
 
     printf("[SYS_BEHAVIOR] 系统调用监控挂载成功，Ringbuf 钉固于: %s\n", SYS_RB_PIN_PATH);
+
+    bpf_map__unpin(sys_skel->maps.behavioral_discovery_enabled,
+                   "/sys/fs/bpf/behavioral_discovery_enabled");
+    bpf_map__pin(sys_skel->maps.behavioral_discovery_enabled,
+                 "/sys/fs/bpf/behavioral_discovery_enabled");
+
     return 0;
 }
 
@@ -77,6 +89,8 @@ void teardown_sys_behavior(void) {
         bpf_map__unpin(sys_skel->maps.raw_rb, RAW_RB_PIN_PATH);
         bpf_map__unpin(sys_skel->maps.resource_map, RES_MAP_PIN_PATH);
         bpf_map__unpin(sys_skel->maps.listen_map, "/sys/fs/bpf/listen_map");
+        bpf_map__unpin(sys_skel->maps.behavioral_discovery_enabled,
+                       "/sys/fs/bpf/behavioral_discovery_enabled");
         sys_behavior_bpf__destroy(sys_skel);
         sys_skel = NULL;
         printf("[SYS_BEHAVIOR] 已卸载清理系统调用监控探针。\n");

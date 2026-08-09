@@ -236,6 +236,7 @@ const char *get_behavior_name(uint32_t type)
     case EVENT_STDIO_WRITE: return "STDIO_WRITE";
     case EVENT_TCP_SEND:  return "TCP_PLAINTEXT_SEND";
     case EVENT_TCP_RECV:  return "TCP_PLAINTEXT_RECV";
+    case EVENT_AGENT_DISCOVERY: return "AGENT_BEHAVIORAL_DISCOVERY";
     default: return "UNKNOWN_BEHAVIOR";
     }
 }

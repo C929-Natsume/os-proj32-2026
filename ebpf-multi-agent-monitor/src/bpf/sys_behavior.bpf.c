@@ -93,6 +93,22 @@ struct {
     __type(value, struct pending_msg_arg);
 } pending_msg SEC(".maps");
 
+// 行为识别开关 (0=关闭, 1=开启)
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u8);
+} behavioral_discovery_enabled SEC(".maps");
+
+// 未知进程候选评分 (行为识别引擎)
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10240);
+    __type(key, __u32);
+    __type(value, struct candidate_score);
+} unknown_candidate_map SEC(".maps");
+
 // Ring buffer 丢弃计数 — 消除静默数据丢失
 enum drop_reason {
     DROP_SYS_EVENT,
@@ -144,6 +160,84 @@ static __always_inline bool promote_to_sub_agent(__u32 pid) {
     child_ctx->agent_id = AGENT_ID_AUTO_DETECT(pid);
     child_ctx->depth = 1;
     return true;
+}
+
+static __always_inline bool is_behavioral_discovery_enabled(void) {
+    __u32 key = 0;
+    __u8 *val = bpf_map_lookup_elem(&behavioral_discovery_enabled, &key);
+    return val && (*val == 1);
+}
+
+static __always_inline void update_candidate_score(__u32 pid, __u8 flag_type) {
+    if (!is_behavioral_discovery_enabled())
+        return;
+
+    struct candidate_score *score = bpf_map_lookup_elem(&unknown_candidate_map, &pid);
+    __u64 now = bpf_ktime_get_ns();
+
+    if (!score) {
+        struct candidate_score new_score = {0};
+        new_score.first_seen_ns = now;
+        bpf_map_update_elem(&unknown_candidate_map, &pid, &new_score, BPF_ANY);
+        score = bpf_map_lookup_elem(&unknown_candidate_map, &pid);
+        if (!score) return;
+    }
+
+    if (score->flags & 0x80)
+        return;
+
+    if ((now - score->first_seen_ns) > DISCOVERY_TIME_WINDOW_NS) {
+        score->sys_event_count = 0;
+        score->raw_data_count = 0;
+        score->first_seen_ns = now;
+        score->flags = 0;
+    }
+
+    if (flag_type == 0) {
+        __sync_fetch_and_add(&score->sys_event_count, 1);
+        score->flags |= 1;
+    } else {
+        __sync_fetch_and_add(&score->raw_data_count, 1);
+        score->flags |= 2;
+    }
+}
+
+static __always_inline void check_and_promote_unknown(__u32 pid) {
+    if (!is_behavioral_discovery_enabled())
+        return;
+
+    struct candidate_score *score = bpf_map_lookup_elem(&unknown_candidate_map, &pid);
+    if (!score) return;
+    if (score->flags & 0x80) return;
+
+    __u64 now = bpf_ktime_get_ns();
+    if ((now - score->first_seen_ns) > DISCOVERY_TIME_WINDOW_NS) return;
+    if (score->sys_event_count < DISCOVERY_SYS_EVENT_THRESHOLD) return;
+    if (score->raw_data_count < DISCOVERY_LLM_MATCH_THRESHOLD) return;
+
+    struct process_context new_ctx = {0};
+    new_ctx.agent_id = AGENT_ID_BEHAVIORAL(pid);
+    new_ctx.is_sub_agent = CONFIRMED_SUB_AGENT;
+    new_ctx.parent_pid = 0;
+    new_ctx.depth = 0;
+    char default_name[] = "Behavioral-Agent";
+    __builtin_memcpy(new_ctx.agent_name, default_name, sizeof(default_name));
+
+    bpf_map_update_elem(&monitored_pids, &pid, &new_ctx, BPF_ANY);
+    score->flags |= 0x80;
+
+    struct sys_event *event = bpf_ringbuf_reserve(&rb, sizeof(*event), 0);
+    if (!event) return;
+    __builtin_memset(event, 0, sizeof(*event));
+    event->event_type = EVENT_AGENT_DISCOVERY;
+    event->pid = pid;
+    event->timestamp = now;
+    event->agent_id = new_ctx.agent_id;
+    __builtin_memcpy(event->agent_name, new_ctx.agent_name, MAX_AGENT_NAME_LEN);
+    bpf_get_current_comm(&event->comm, sizeof(event->comm));
+    bpf_ringbuf_submit(event, 0);
+
+    bpf_map_delete_elem(&unknown_candidate_map, &pid);
 }
 
 static __always_inline bool is_ai_api_port(__u16 dport_host) {
@@ -218,6 +312,8 @@ static __always_inline void submit_sys_event(__u32 event_type, __u64 pid_tgid, c
             ctx = bpf_map_lookup_elem(&monitored_pids, &pid);
             if (!ctx) return;
         } else {
+            if (event_type == EVENT_EXECVE || event_type == EVENT_OPEN)
+                update_candidate_score(pid, 0);
             return;
         }
     }
@@ -284,6 +380,7 @@ static __always_inline void submit_connect_event(__u64 pid_tgid,
             if (!ctx)
                 return;
         } else {
+            update_candidate_score(pid, 0);
             return;
         }
     }
@@ -589,7 +686,18 @@ static __always_inline void submit_raw_event(__u32 pid, __u32 fd,
     const char *buf, size_t count, int direction, enum raw_data_source source, __u32 peer) {
 
     struct process_context *ctx = bpf_map_lookup_elem(&monitored_pids, &pid);
-    if (!ctx) return;
+    if (!ctx) {
+        if (is_behavioral_discovery_enabled() && buf && count > 0) {
+            __u8 preview[LLM_FP_SCAN_LEN];
+            if (bpf_probe_read_user(preview, sizeof(preview), buf) == 0) {
+                if (has_llm_protocol_fingerprint(preview, LLM_FP_SCAN_LEN)) {
+                    update_candidate_score(pid, 1);
+                    check_and_promote_unknown(pid);
+                }
+            }
+        }
+        return;
+    }
 
     struct raw_data_event *event = bpf_ringbuf_reserve(&raw_rb, sizeof(*event), 0);
     if (!event) { inc_drop(DROP_RAW_EVENT); return; }
@@ -797,9 +905,20 @@ static __always_inline void submit_msghdr_event(int fd, struct user_msghdr *msg,
 
     struct process_context *pctx = bpf_map_lookup_elem(&monitored_pids, &pid);
     if (!pctx) {
-        if (!try_auto_register(&monitored_pids)) return;
-        pctx = bpf_map_lookup_elem(&monitored_pids, &pid);
-        if (!pctx) return;
+        if (try_auto_register(&monitored_pids)) {
+            pctx = bpf_map_lookup_elem(&monitored_pids, &pid);
+            if (!pctx) return;
+        } else {
+            if (is_behavioral_discovery_enabled() && msg) {
+                __u8 preview[LLM_FP_SCAN_LEN];
+                int payload_len = read_msghdr_payload(msg, preview, sizeof(preview));
+                if (payload_len >= 16 && has_llm_protocol_fingerprint(preview, LLM_FP_SCAN_LEN)) {
+                    update_candidate_score(pid, 1);
+                    check_and_promote_unknown(pid);
+                }
+            }
+            return;
+        }
     }
 
     struct raw_data_event *event = bpf_ringbuf_reserve(&raw_rb, sizeof(*event), 0);

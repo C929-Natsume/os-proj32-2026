@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <hiredis/hiredis.h>
 #include "../bpf/common.h"
 #include "agent_tracker.h"
@@ -185,6 +186,34 @@ struct agent_state *get_or_create_ssl_fallback_agent(const struct probe_SSL_data
         strncpy(state->comm, "ssl", sizeof(state->comm) - 1);
     state->comm[sizeof(state->comm) - 1] = '\0';
 
+    publish_agent_registration(state);
+    return state;
+}
+
+struct agent_state *create_behavioral_agent(unsigned int pid, const char *comm)
+{
+    struct agent_state *state = allocate_agent_slot();
+    if (!state) return NULL;
+
+    state->pid = pid;
+    state->main_pid = pid;
+    state->is_sub_agent = 1;
+    state->depth = 0;
+
+    snprintf(state->agent_id, sizeof(state->agent_id), "behavioral_%u", pid);
+
+    char cwd_path[64];
+    snprintf(cwd_path, sizeof(cwd_path), "/proc/%u/cwd", pid);
+    ssize_t len = readlink(cwd_path, state->workspace, sizeof(state->workspace) - 1);
+    if (len > 0)
+        state->workspace[len] = '\0';
+    else
+        strncpy(state->workspace, "/", sizeof(state->workspace) - 1);
+
+    strncpy(state->comm, comm && comm[0] ? comm : "behavioral", sizeof(state->comm) - 1);
+    state->comm[sizeof(state->comm) - 1] = '\0';
+
+    printf("[DISCOVERY] 行为识别发现新智能体 PID=%u comm=%s\n", pid, state->comm);
     publish_agent_registration(state);
     return state;
 }

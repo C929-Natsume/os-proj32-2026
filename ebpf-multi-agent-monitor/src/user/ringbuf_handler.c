@@ -29,6 +29,14 @@ static int handle_sys_event(void *ctx, void *data, size_t len) {
     if (len != sizeof(struct sys_event)) return 1;
 
     struct sys_event *event = data;
+
+    if (event->event_type == EVENT_AGENT_DISCOVERY) {
+        printf("[RINGBUF] 行为识别发现事件 PID:%u Comm:%s AgentID:%u\n",
+               event->pid, event->comm, event->agent_id);
+        create_behavioral_agent(event->pid, event->comm);
+        return 0;
+    }
+
     // 打印带有 child_pid 的系统日志，方便核对血缘树
     printf("[RINGBUF] 系统行为 -> Type:%u | PID:%u | ChildPID:%u | Comm:%s\n",
            event->event_type, event->pid, event->child_pid, event->comm);

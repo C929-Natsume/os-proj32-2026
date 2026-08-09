@@ -16,6 +16,14 @@
 #define AGENT_ID_IS_KERNEL_SNIFFED(id)  (((id) & 0x80000000) != 0)
 #define AGENT_ID_EXTRACT_PID(id)        ((id) & 0x7FFFFFFF)
 
+#define AGENT_DISCOVERY_BEHAVIORAL 0x40000000  // 行为识别标志位
+#define AGENT_ID_BEHAVIORAL(pid) (AGENT_DISCOVERY_BEHAVIORAL | (pid))
+#define AGENT_ID_IS_BEHAVIORAL(id) (((id) & 0x40000000) != 0)
+
+#define DISCOVERY_SYS_EVENT_THRESHOLD   1
+#define DISCOVERY_LLM_MATCH_THRESHOLD   2
+#define DISCOVERY_TIME_WINDOW_NS        (30ULL * 1000000000ULL)
+
 // 增加监测： cpu 占用 & 内存占用结构
 enum resource_level {
     RES_LEVEL_SYS    = 1,  // 系统全局级
@@ -49,6 +57,7 @@ enum event_type {
     EVENT_STDIO_WRITE,       // MCP stdio 写入 (stdout/stderr)
     EVENT_TCP_SEND,          // 纯文本 TCP 发送 (localhost HTTP/A2A/ACP/ANP)
     EVENT_TCP_RECV,          // 纯文本 TCP 接收
+    EVENT_AGENT_DISCOVERY,   // 行为识别发现新智能体
 };
 
 // 监听端口-智能体映射
@@ -101,6 +110,14 @@ struct fd_peer_info {
     __u32 peer_pid;
     __u32 peer_agent_id;
     char peer_agent_name[MAX_AGENT_NAME_LEN];
+};
+
+// 未知进程候选评分结构体 (行为识别引擎)
+struct candidate_score {
+    __u64 sys_event_count;       // 高危系统调用次数
+    __u64 raw_data_count;        // LLM数据匹配次数
+    __u64 first_seen_ns;         // 首次发现时间戳
+    __u8  flags;                 // bit0=有高危sys, bit1=有LLM数据, bit7=已注册
 };
 
 #include "sys_behavior.h"

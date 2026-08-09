@@ -43,7 +43,7 @@ static struct sys_event captured_events[MAX_CAPTURED];
 static int captured_count = 0;
 
 /* ===== External APIs from loader components ===== */
-extern int setup_sys_behavior(void);
+extern int setup_sys_behavior(int enable_behavioral);
 extern int get_monitored_pids_fd(void);
 extern void teardown_sys_behavior(void);
 extern void register_agent(int map_fd, int pid, __u32 agent_id,
@@ -87,7 +87,7 @@ static struct ring_buffer *raw_rb = NULL;
 static int setup(void) {
     int fd;
 
-    if (setup_sys_behavior() != 0) {
+    if (setup_sys_behavior(0) != 0) {
         fprintf(stderr, "FAIL: setup_sys_behavior\n");
         return -1;
     }

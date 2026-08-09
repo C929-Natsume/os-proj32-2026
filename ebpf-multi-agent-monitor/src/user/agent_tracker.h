@@ -32,6 +32,7 @@ struct agent_state *get_or_create_agent(unsigned int pid, unsigned int ppid,
 struct agent_state *get_or_create_ssl_fallback_agent(const struct probe_SSL_data_t *event);
 int cmdline_contains_agent_marker(unsigned int pid, char *comm_out, size_t comm_out_len);
 void publish_agent_registration(struct agent_state *state);
+struct agent_state *create_behavioral_agent(unsigned int pid, const char *comm);
 
 void agent_tracker_init(void);
 

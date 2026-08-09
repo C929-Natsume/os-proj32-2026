@@ -15,7 +15,7 @@
 
 __u32 global_agent_id_counter = 1000; // 初始agent_id = 1000
 
-extern int setup_sys_behavior(void);
+extern int setup_sys_behavior(int enable_behavioral);
 extern void teardown_sys_behavior(void);
 
 extern int setup_ssl_sniffer(int *target_pids, int count);
@@ -28,6 +28,7 @@ extern int add_new_agents_ssl(int *target_pids, int count);
 
 static volatile int running = 1;
 static const char *g_filter_agent = NULL;
+static int enable_behavioral_discovery = 0;
 
 // 用于同时存储 PID 和智能体类型的结构体：智能体/插件
 struct agent_info {
@@ -164,6 +165,8 @@ static void print_usage(const char *prog) {
     fprintf(stderr, "用法: sudo %s [选项] [PID]\n", prog);
     fprintf(stderr, "选项:\n");
     fprintf(stderr, "  --agent <名称>    仅监控匹配指定关键词的智能体 (如 claude, opencode)\n");
+    fprintf(stderr, "  -B, --enable-behavioral-discovery\n");
+    fprintf(stderr, "                    启用行为识别引擎，自动发现未知智能体\n");
     fprintf(stderr, "  --help            显示此帮助信息\n");
     fprintf(stderr, "  PID               手动指定目标进程 PID (与 --agent 可组合使用)\n");
     fprintf(stderr, "已知智能体关键词: ");
@@ -187,12 +190,13 @@ int main(int argc, char **argv) {
 
     static struct option long_opts[] = {
         {"agent", required_argument, 0, 'a'},
+        {"enable-behavioral-discovery", no_argument, 0, 'B'},
         {"help",  no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "a:h", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "a:Bh", long_opts, NULL)) != -1) {
         switch (opt) {
         case 'a':
             g_filter_agent = optarg;
@@ -200,6 +204,10 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "[!] 警告: '%s' 不在已知关键词列表中，将尝试直接匹配\n", g_filter_agent);
             }
             printf("[LOADER] Agent 过滤器已启用: 仅追踪 '%s'\n", g_filter_agent);
+            break;
+        case 'B':
+            enable_behavioral_discovery = 1;
+            printf("[LOADER] 行为识别引擎已启用 (Behavioral Agent Discovery)\n");
             break;
         case 'h':
             print_usage(prog_name);
@@ -222,7 +230,7 @@ int main(int argc, char **argv) {
     signal(SIGTERM, sig_handler);
 
     printf("[LOADER] [1/3] 正在拉起系统行为追踪引擎...\n");
-    if (setup_sys_behavior() != 0) {
+    if (setup_sys_behavior(enable_behavioral_discovery) != 0) {
         fprintf(stderr, "[-] 系统行为引擎启动失败！\n");
         return 1;
     }
