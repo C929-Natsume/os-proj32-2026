@@ -36,7 +36,6 @@ struct {
     __type(value, struct process_context); 
 } agent_info_map SEC(".maps");
 
-// Ring buffer 丢弃计数
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
     __uint(max_entries, 1);
@@ -50,7 +49,7 @@ static __always_inline void inc_ssl_drop(void) {
     if (cnt) __sync_fetch_and_add(cnt, 1);
 }
 
-// 专门用于暂存 SSL_read_ex / SSL_write_ex 的 size_t* readbytes 参数
+// SSL_read_ex / SSL_write_ex 的 size_t* 输出参数
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, MAX_ENTRIES);
@@ -78,64 +77,97 @@ static __always_inline int process_data_exit(void *buf, int len, int rw, bool is
     u32 pid = pid_tgid >> 32;
     u32 tid = (u32)pid_tgid;
     u32 uid = bpf_get_current_uid_gid();
-    u64 ts = bpf_ktime_get_ns();
+    u64 ts  = bpf_ktime_get_ns();
 
     if (!trace_allowed(uid, pid)) return 0;
-    if (len <= 0 && !is_handshake) return 0; // 无数据且不是握手则丢弃
+    if (len <= 0 && !is_handshake) return 0;
 
     u64 *tsp = bpf_map_lookup_elem(&start_ns, &tid);
     u64 delta_ns = tsp ? (ts - *tsp) : 0;
 
-    struct probe_SSL_data_t *data = bpf_ringbuf_reserve(&rb, sizeof(*data), 0);
-    if (!data) { inc_ssl_drop(); return 0; }
+    u32 u32_len = (u32)len;
+    u16 total   = (u32_len > MAX_BUF_SIZE) ? 2 : 1;
 
-    // ================= 核心修改：注入身份标识 =================
-    struct process_context *ctx = bpf_map_lookup_elem(&agent_info_map, &pid);
-    if (ctx) {
-        data->agent_id = ctx->agent_id;
-        __builtin_memcpy(data->agent_name, ctx->agent_name, MAX_AGENT_NAME_LEN);
+    struct process_context *pctx = bpf_map_lookup_elem(&agent_info_map, &pid);
+    u32   aid = pctx ? pctx->agent_id : 0;
+    char  aname[MAX_AGENT_NAME_LEN] = {0};
+    if (pctx)
+        __builtin_memcpy(aname, pctx->agent_name, MAX_AGENT_NAME_LEN);
+
+    char comm[MAX_COMM_LEN];
+    bpf_get_current_comm(&comm, sizeof(comm));
+
+    bool skip = false;
+    if (comm[0] == 'g' && comm[1] == 'i' && comm[2] == 't' && comm[3] == '\0')
+        skip = true;
+    else if (comm[0] == 's' && comm[1] == 's' && comm[2] == 'h')
+        skip = true;
+
+    /* ── HEAD (chunk_index = 0) ── */
+    struct probe_SSL_data_t *ev = bpf_ringbuf_reserve(&rb, sizeof(*ev), 0);
+    if (!ev) { inc_ssl_drop(); return 0; }
+
+    ev->agent_id   = aid;
+    __builtin_memcpy(ev->agent_name, aname, sizeof(ev->agent_name));
+    ev->timestamp_ns = ts;
+    ev->delta_ns     = delta_ns;
+    ev->pid          = pid;
+    ev->tid          = tid;
+    ev->uid          = uid;
+    ev->len          = u32_len;
+    ev->rw           = rw;
+    ev->is_handshake = (int)is_handshake;
+    ev->engine       = engine;
+    ev->chunk_index  = 0;
+    ev->chunk_total  = total;
+    __builtin_memcpy(ev->comm, comm, sizeof(ev->comm));
+
+    if (buf && len > 0 && !skip) {
+        u32 sz = u32_len;
+        if (sz > MAX_BUF_SIZE) sz = MAX_BUF_SIZE;
+        int ret = bpf_probe_read_user(&ev->buf, sz, buf);
+        ev->buf_filled = (ret == 0) ? 1 : 0;
+        ev->buf_size   = (ret == 0) ? sz : 0;
     } else {
-        data->agent_id = 0;
-        data->agent_name[0] = '\0';
+        ev->buf_filled = 0;
+        ev->buf_size   = 0;
     }
+    bpf_ringbuf_submit(ev, 0);
 
-    data->timestamp_ns = ts;
-    data->delta_ns = delta_ns;
-    data->pid = pid;
-    data->tid = tid;
-    data->uid = uid;
-    data->len = (u32)len;
-    data->rw = rw;
-    data->is_handshake = is_handshake;
-    data->engine = engine;
-    bpf_get_current_comm(&data->comm, sizeof(data->comm));
+    /* ── TAIL (chunk_index = 1) ── */
+    if (total != 2 || u32_len <= TAIL_BUF_SIZE)
+        return 0;
 
-    // 使用字节比对
-    bool skip_payload = false;
-    if (data->comm[0] == 'g' && data->comm[1] == 'i' && data->comm[2] == 't' && data->comm[3] == '\0') {
-        skip_payload = true;
-    } else if (data->comm[0] == 's' && data->comm[1] == 's' && data->comm[2] == 'h') {
-        skip_payload = true;
-    }
+    struct probe_SSL_data_t *tl = bpf_ringbuf_reserve(&rb, sizeof(*tl), 0);
+    if (!tl) return 0;
 
-    if (buf && len > 0 && !skip_payload) {
-        u32 copy_size = (u32)len;
-        if (copy_size > MAX_BUF_SIZE) copy_size = MAX_BUF_SIZE;
-        
-        int ret = bpf_probe_read_user(&data->buf, copy_size, buf);
-        if (!ret) {
-            data->buf_filled = 1;
-            data->buf_size = copy_size;
-        } else {
-            data->buf_filled = 0;
-            data->buf_size = 0;
-        }
+    tl->agent_id   = aid;
+    __builtin_memcpy(tl->agent_name, aname, sizeof(tl->agent_name));
+    tl->timestamp_ns = ts;
+    tl->delta_ns     = 0;
+    tl->pid          = pid;
+    tl->tid          = tid;
+    tl->uid          = uid;
+    tl->len          = u32_len;
+    tl->rw           = rw;
+    tl->is_handshake = (int)is_handshake;
+    tl->engine       = engine;
+    tl->chunk_index  = 1;
+    tl->chunk_total  = total;
+    __builtin_memcpy(tl->comm, comm, sizeof(tl->comm));
+
+    if (buf && !skip) {
+        u32 off = u32_len - TAIL_BUF_SIZE;
+        int ret = bpf_probe_read_user(&tl->buf, TAIL_BUF_SIZE,
+                                       (const char *)buf + off);
+        tl->buf_filled = (ret == 0) ? 1 : 0;
+        tl->buf_size   = (ret == 0) ? TAIL_BUF_SIZE : 0;
     } else {
-        data->buf_filled = 0;
-        data->buf_size = 0;
+        tl->buf_filled = 0;
+        tl->buf_size   = 0;
     }
+    bpf_ringbuf_submit(tl, 0);
 
-    bpf_ringbuf_submit(data, 0);
     return 0;
 }
 
@@ -183,16 +215,18 @@ int BPF_URETPROBE(probe_SSL_write_exit) {
 // 模块 2: OpenSSL_ex 扩展函数 (处理现代大模型 SDK)
 // ===========================================================
 SEC("uprobe/SSL_write_ex")
-int BPF_UPROBE(probe_SSL_write_ex_enter, void *ssl, void *buf, size_t num, size_t *readbytes) {
+int BPF_UPROBE(probe_SSL_write_ex_enter, void *ssl, void *buf, size_t num, size_t *written) {
     u64 pid_tgid = bpf_get_current_pid_tgid();
     u32 tid = (u32)pid_tgid;
     u64 ts = bpf_ktime_get_ns();
 
     if (!trace_allowed(bpf_get_current_uid_gid(), pid_tgid >> 32)) return 0;
 
+    bpf_map_update_elem(&readbytes_ptrs, &tid, &written, BPF_ANY);
     bpf_map_update_elem(&bufs, &tid, &buf, BPF_ANY);
-    bpf_map_update_elem(&start_ns, &tid, &ts, BPF_ANY); 
-    bpf_map_update_elem(&readbytes_ptrs, &tid, &readbytes, BPF_ANY);
+    bpf_map_update_elem(&start_ns, &tid, &ts, BPF_ANY);
+    // tail-call 修复: entry 直接提交, 不依赖 uretprobe
+    process_data_exit(buf, (int)num, 1, false, ENGINE_OPENSSL);
     return 0;
 }
 
@@ -223,9 +257,9 @@ int BPF_UPROBE(probe_SSL_read_ex_enter, void *ssl, void *buf, size_t num, size_t
     u32 tid = (u32)pid_tgid;
     u64 ts = bpf_ktime_get_ns();
     if (!trace_allowed(bpf_get_current_uid_gid(), pid_tgid >> 32)) return 0;
-    bpf_map_update_elem(&bufs, &tid, &buf, BPF_ANY);
-    bpf_map_update_elem(&start_ns, &tid, &ts, BPF_ANY); 
     bpf_map_update_elem(&readbytes_ptrs, &tid, &readbytes, BPF_ANY);
+    bpf_map_update_elem(&bufs, &tid, &buf, BPF_ANY);
+    bpf_map_update_elem(&start_ns, &tid, &ts, BPF_ANY);
     return 0;
 }
 

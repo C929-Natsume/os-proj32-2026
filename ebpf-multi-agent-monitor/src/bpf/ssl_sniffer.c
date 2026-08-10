@@ -193,6 +193,7 @@ out:
 	return result;
 }
 
+
 // ------------------------------------------------------------------
 // 动态扫描目标进程环境，路由挂载策略
 // ------------------------------------------------------------------
@@ -241,7 +242,6 @@ void attach_probes_dynamically(struct ssl_sniffer_bpf *skel, int *pids, int coun
 
                             // SSL_write_ex + SSL_read_ex 现代扩展函数
                             ATTACH_UPROBE(skel, lib_path, "SSL_write_ex", probe_SSL_write_ex_enter, false);
-                            ATTACH_UPROBE(skel, lib_path, "SSL_write_ex", probe_SSL_write_ex_exit, true);
                             ATTACH_UPROBE(skel, lib_path, "SSL_read_ex", probe_SSL_read_ex_enter, false);
                             ATTACH_UPROBE(skel, lib_path, "SSL_read_ex", probe_SSL_read_ex_exit, true);
 
