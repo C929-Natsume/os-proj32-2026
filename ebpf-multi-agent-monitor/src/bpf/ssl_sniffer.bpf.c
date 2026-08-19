@@ -86,7 +86,6 @@ static __always_inline int process_data_exit(void *buf, int len, int rw, bool is
     u64 delta_ns = tsp ? (ts - *tsp) : 0;
 
     u32 u32_len = (u32)len;
-    u16 total   = (u32_len > MAX_BUF_SIZE) ? 2 : 1;
 
     struct process_context *pctx = bpf_map_lookup_elem(&agent_info_map, &pid);
     u32   aid = pctx ? pctx->agent_id : 0;
@@ -103,70 +102,47 @@ static __always_inline int process_data_exit(void *buf, int len, int rw, bool is
     else if (comm[0] == 's' && comm[1] == 's' && comm[2] == 'h')
         skip = true;
 
-    /* ── HEAD (chunk_index = 0) ── */
-    struct probe_SSL_data_t *ev = bpf_ringbuf_reserve(&rb, sizeof(*ev), 0);
-    if (!ev) { inc_ssl_drop(); return 0; }
+    /* ── chunk metadata ── */
+    u16 total = (u32_len + MAX_BUF_SIZE - 1) / MAX_BUF_SIZE;
+    if (total > 32) total = 32;  /* cap at 2MB */
 
-    ev->agent_id   = aid;
-    __builtin_memcpy(ev->agent_name, aname, sizeof(ev->agent_name));
-    ev->timestamp_ns = ts;
-    ev->delta_ns     = delta_ns;
-    ev->pid          = pid;
-    ev->tid          = tid;
-    ev->uid          = uid;
-    ev->len          = u32_len;
-    ev->rw           = rw;
-    ev->is_handshake = (int)is_handshake;
-    ev->engine       = engine;
-    ev->chunk_index  = 0;
-    ev->chunk_total  = total;
-    __builtin_memcpy(ev->comm, comm, sizeof(ev->comm));
+    /* ── submit chunks in bounded loop ── */
+    #pragma unroll
+    for (u16 i = 0; i < 32; i++) {
+        if (i >= total) break;
 
-    if (buf && len > 0 && !skip) {
-        u32 sz = u32_len;
+        u32 off = i * (u32)MAX_BUF_SIZE;
+        u32 sz  = u32_len - off;
         if (sz > MAX_BUF_SIZE) sz = MAX_BUF_SIZE;
-        int ret = bpf_probe_read_user(&ev->buf, sz, buf);
-        ev->buf_filled = (ret == 0) ? 1 : 0;
-        ev->buf_size   = (ret == 0) ? sz : 0;
-    } else {
-        ev->buf_filled = 0;
-        ev->buf_size   = 0;
+
+        struct probe_SSL_data_t *c = bpf_ringbuf_reserve(&rb, sizeof(*c), 0);
+        if (!c) break;  /* ring buffer full, stop here */
+
+        c->agent_id   = aid;
+        __builtin_memcpy(c->agent_name, aname, sizeof(c->agent_name));
+        c->timestamp_ns = ts;
+        c->delta_ns     = (i == 0) ? delta_ns : 0;
+        c->pid          = pid;
+        c->tid          = tid;
+        c->uid          = uid;
+        c->len          = u32_len;
+        c->rw           = rw;
+        c->is_handshake = (int)is_handshake;
+        c->engine       = engine;
+        c->chunk_index  = i;
+        c->chunk_total  = total;
+        __builtin_memcpy(c->comm, comm, sizeof(c->comm));
+
+        if (buf && len > 0 && !skip) {
+            int ret = bpf_probe_read_user(&c->buf, sz, (const char *)buf + off);
+            c->buf_filled = (ret == 0) ? 1 : 0;
+            c->buf_size   = (ret == 0) ? sz : 0;
+        } else {
+            c->buf_filled = 0;
+            c->buf_size   = 0;
+        }
+        bpf_ringbuf_submit(c, 0);
     }
-    bpf_ringbuf_submit(ev, 0);
-
-    /* ── TAIL (chunk_index = 1) ── */
-    if (total != 2 || u32_len <= TAIL_BUF_SIZE)
-        return 0;
-
-    struct probe_SSL_data_t *tl = bpf_ringbuf_reserve(&rb, sizeof(*tl), 0);
-    if (!tl) return 0;
-
-    tl->agent_id   = aid;
-    __builtin_memcpy(tl->agent_name, aname, sizeof(tl->agent_name));
-    tl->timestamp_ns = ts;
-    tl->delta_ns     = 0;
-    tl->pid          = pid;
-    tl->tid          = tid;
-    tl->uid          = uid;
-    tl->len          = u32_len;
-    tl->rw           = rw;
-    tl->is_handshake = (int)is_handshake;
-    tl->engine       = engine;
-    tl->chunk_index  = 1;
-    tl->chunk_total  = total;
-    __builtin_memcpy(tl->comm, comm, sizeof(tl->comm));
-
-    if (buf && !skip) {
-        u32 off = u32_len - TAIL_BUF_SIZE;
-        int ret = bpf_probe_read_user(&tl->buf, TAIL_BUF_SIZE,
-                                       (const char *)buf + off);
-        tl->buf_filled = (ret == 0) ? 1 : 0;
-        tl->buf_size   = (ret == 0) ? TAIL_BUF_SIZE : 0;
-    } else {
-        tl->buf_filled = 0;
-        tl->buf_size   = 0;
-    }
-    bpf_ringbuf_submit(tl, 0);
 
     return 0;
 }

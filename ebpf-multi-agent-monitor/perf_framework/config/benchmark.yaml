@@ -1,0 +1,105 @@
+# ============================================================
+# eBPF Multi-Agent Monitor — Performance Benchmark Configuration
+# ============================================================
+
+benchmark:
+  iterations: 3
+  warmup_iterations: 1
+  cooldown_seconds: 5
+  timeout_per_tier_seconds: 120
+
+# ---- Workload Tiers (graded stress) ----
+tiers:
+  light:
+    label: L1-Light
+    file_iterations: 100
+    net_messages: 20
+    fork_count: 10
+    exec_count: 5
+    ssl_requests: 10
+    parallelism: 1
+    description: "10% system capacity — light file I/O + few network connections"
+
+  normal:
+    label: L2-Normal
+    file_iterations: 500
+    net_messages: 100
+    fork_count: 50
+    exec_count: 25
+    ssl_requests: 50
+    parallelism: 2
+    description: "50% system capacity — typical agent workload"
+
+  heavy:
+    label: L3-Heavy
+    file_iterations: 2000
+    net_messages: 500
+    fork_count: 200
+    exec_count: 100
+    ssl_requests: 200
+    parallelism: 4
+    description: "90% system capacity — sustained high-load operation"
+
+  burst:
+    label: L4-Burst
+    file_iterations: 5000
+    net_messages: 0
+    fork_count: 300
+    exec_count: 0
+    ssl_requests: 0
+    parallelism: 16
+    description: "Instantaneous spike — parallel file + fork burst"
+
+# ---- Thresholds for pass/fail evaluation ----
+thresholds:
+  fastpath_overhead_pct: 5.0
+  fullcapture_overhead_pct: 30.0
+  event_capture_rate_min_pct: 99.0
+  ssl_capture_rate_min_pct: 98.0
+  ssl_reassembly_rate_min_pct: 95.0
+  detection_latency_p95_max_ms: 500.0
+  detection_latency_p99_max_ms: 1000.0
+  accuracy_f1_min: 0.80
+  accuracy_recall_min: 0.75
+
+# ---- Redis connection ----
+redis:
+  host: "127.0.0.1"
+  port: 6379
+  db: 0
+  event_channel: "ebpf_events"
+  metrics_prefix: "inter:metric:"
+  events_stream: "inter:events"
+
+# ---- eBPF paths ----
+bpf:
+  loader_binary: "build/loader"
+  ringbuf_handler_binary: "build/ringbuf_handler"
+  ringbuf_log: "/tmp/perf_bench_ringbuf.log"
+  loader_log: "/tmp/perf_bench_loader.log"
+  fifo_path: "/tmp/perf_bench_rb.fifo"
+
+# ---- Perf stat events to collect ----
+perf:
+  events:
+    - instructions
+    - cycles
+    - cache-misses
+    - branches
+    - branch-misses
+  use_perf_stat: true
+
+# ---- CPU frequency control ----
+cpu:
+  lock_frequency_ghz: 2.0
+  governor: "performance"
+  use_cpupower: true
+
+# ---- Output ----
+output:
+  report_dir: "./reports"
+  raw_data_dir: "./reports/raw_data"
+  report_prefix: "ebpf_perf_bench"
+  formats:
+    - pdf
+    - csv

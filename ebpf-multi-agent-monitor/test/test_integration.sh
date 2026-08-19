@@ -61,14 +61,19 @@ start_claude_agent() {
 # ====================== 启动 Loader 引擎 ======================
 start_loader() {
     local extra_args="${1:-}"
-    rm -f /sys/fs/bpf/sys_rb /sys/fs/bpf/ssl_rb /sys/fs/bpf/raw_rb /sys/fs/bpf/res_map 2>/dev/null || true
+    # 清理全部可能残留的 pin（SIGKILL 的 loader 不执行 teardown，会留下孤儿 pin）
+    rm -f /sys/fs/bpf/sys_rb /sys/fs/bpf/ssl_rb /sys/fs/bpf/raw_rb \
+          /sys/fs/bpf/res_map /sys/fs/bpf/listen_map \
+          /sys/fs/bpf/behavioral_discovery_enabled 2>/dev/null || true
     
     # 【神级修复】：使用 stdbuf -oL 强行将 C 程序的输出改为行缓冲，立刻刷入文件
     stdbuf -oL -eL $LOADER $extra_args > /tmp/test_loader.log 2>&1 &
     LOADER_PID=$!
     
+    # 等待条件：sys_rb 存在【且】loader 日志出现"系统调用监控挂载成功"
+    # （该行在 全量加载+挂载+钉固 全部完成后才打印，避免在残留的旧 sys_rb 上提前返回）
     local waited=0
-    while [ "$waited" -lt 6 ]; do
+    while [ "$waited" -lt 8 ]; do
         sleep 1
         waited=$((waited + 1))
         
@@ -78,12 +83,14 @@ start_loader() {
             return 1
         fi
         
-        if [ -f "/sys/fs/bpf/sys_rb" ]; then
+        if [ -f "/sys/fs/bpf/sys_rb" ] && \
+           grep -q "系统调用监控挂载成功" /tmp/test_loader.log 2>/dev/null; then
             return 0
         fi
     done
     
-    echo "FAIL: loader BPF programs did not appear within 6s"
+    echo "FAIL: loader BPF programs did not fully load within 8s (see /tmp/test_loader.log)"
+    cat /tmp/test_loader.log
     return 1
 }
 
@@ -163,9 +170,14 @@ test_raw_data_paths() {
     section "5. Raw Data Capture Paths (BPF probe attachment)"
     if ! start_loader; then fail "loader start"; return; fi
 
+    # 等待 1 秒让程序列表稳定，再取一次性快照（避免多次调用间的状态抖动）
+    sleep 1
+    local prog_snapshot
+    prog_snapshot=$(bpftool prog list 2>/dev/null)
+
     local probes=0
     for p in "sys_read" "sys_write" "sys_sendto" "sys_recvfrom" "sys_sendmsg" "sys_recvmsg" "sys_exit_read" "sys_exit_recvfrom"; do
-        if bpftool prog list 2>/dev/null | grep -q "$p"; then
+        if echo "$prog_snapshot" | grep -q "$p"; then
             probes=$((probes + 1))
         fi
     done
@@ -174,6 +186,11 @@ test_raw_data_paths() {
         pass "$probes raw-data probes attached"
     else
         fail "only $probes raw-data probes found"
+        # 转储诊断信息，便于定位
+        echo "$prog_snapshot" | grep -E 'sys_(read|write|sendto|recvfrom|sendmsg|recvmsg|exit_)' \
+            > /tmp/raw_probes_section5.txt 2>/dev/null || true
+        echo "  [DIAG] snapshot saved: /tmp/raw_probes_section5.txt"
+        echo "  [DIAG] loader log:"; tail -15 /tmp/test_loader.log 2>/dev/null | sed 's/^/        /'
     fi
     stop_loader
 }

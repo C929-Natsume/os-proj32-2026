@@ -6,7 +6,7 @@
     sudo python3 test_plaintext_capture.py
 """
 
-import os, sys, json, time, ssl, socket, base64, redis, signal, subprocess, argparse, urllib.request, tempfile
+import os, sys, json, time, ssl, socket, base64, redis, signal, subprocess, argparse, urllib.request, tempfile, re
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -18,7 +18,7 @@ REDIS_HOST   = "127.0.0.1"
 REDIS_PORT   = 6379
 
 API_URL  = os.environ.get("TEST_API_URL", "https://api.deepseek.com/chat/completions")
-API_KEY  = os.environ.get("TEST_API_KEY", "sk-test-placeholder")
+API_KEY  = os.environ.get("TEST_API_KEY", "sk-dcfcfb4164814cd9b9143afc0e150f91")
 API_MODEL = os.environ.get("TEST_API_MODEL", "deepseek-chat")
 
 # Force-load libssl.so.3 into process memory BEFORE loader scans /proc/self/maps
@@ -121,6 +121,7 @@ def test_small_payload(r, rb_log_path=None):
         "max_tokens": 10, "stream": False,
     }
 
+    expected = len(json.dumps(payload).encode())
     last_id = get_last_stream_id(r)
     stdout, stderr, rc = http_post_json(API_URL, payload, API_KEY, timeout=30)
     info(f"API request returned (rc={rc})")
@@ -131,15 +132,25 @@ def test_small_payload(r, rb_log_path=None):
 
     ssl_events = [e for e in entries if e.get("type") in ("prompt", "response")]
     if not ssl_events:
+        info(f"ssl_capture_rate=0.0 captured_bytes=0 expected_bytes={expected}")
+        info("ssl_content_recovery=0.0")
         fail("No SSL events in inter:messages Stream — sniffer may not be attached")
         return False
 
     for e in ssl_events:
         plain = e.get("plain", "")
         if SMALL_PROMPT in plain or "hello" in plain.lower():
-            ok(f"Plaintext found (type={e.get('type')}, bytes={e.get('bytes')})")
+            recovered = len(SMALL_PROMPT) if SMALL_PROMPT in plain else len("hello")
+            captured = int(e.get("bytes") or 0)
+            rate = min(100.0, captured / expected * 100) if expected else 0.0
+            recov = recovered / len(SMALL_PROMPT) * 100
+            ok(f"Plaintext found (type={e.get('type')}, bytes={captured})")
+            info(f"ssl_capture_rate={rate:.1f} captured_bytes={captured} expected_bytes={expected}")
+            info(f"ssl_content_recovery={recov:.1f} prompt_chars={recovered}/{len(SMALL_PROMPT)}")
             return True
 
+    info(f"ssl_capture_rate=0.0 captured_bytes=0 expected_bytes={expected}")
+    info("ssl_content_recovery=0.0")
     fail("No plaintext match in SSL events")
     return False
 
@@ -157,6 +168,7 @@ def test_large_payload(r, rb_log_path=None):
         "max_tokens": 5, "stream": False,
     }
 
+    expected = len(json.dumps(payload).encode())
     last_id = get_last_stream_id(r)
     stdout, stderr, rc = http_post_json(API_URL, payload, API_KEY, timeout=60)
     info(f"API request returned (rc={rc})")
@@ -166,6 +178,7 @@ def test_large_payload(r, rb_log_path=None):
     entries = query_new_ssl_entries(r, last_id)
 
     ssl_prompts = [e for e in entries if e.get("type") == "prompt"]
+    best_captured = max((int(e.get("bytes") or 0) for e in ssl_prompts), default=0)
 
     for e in ssl_prompts:
         plain = e.get("plain", "")
@@ -174,24 +187,37 @@ def test_large_payload(r, rb_log_path=None):
 
         has_marker = "TRUNCATED" in plain
         has_secret = TAIL_SECRET in plain
+        captured = int(e.get("bytes") or 0)
+        rate = min(100.0, captured / expected * 100) if expected else 0.0
 
         if has_marker and has_secret:
             ok(f"Reassembled: TRUNCATED marker + tail secret both present "
-               f"(bytes={e.get('bytes')})")
+               f"(bytes={captured})")
+            info(f"ssl_capture_rate={rate:.1f} captured_bytes={captured} expected_bytes={expected}")
+            info(f"ssl_content_recovery=100.0 tail_secret={len(TAIL_SECRET)}/{len(TAIL_SECRET)}")
             return True
         elif has_marker:
+            info(f"ssl_capture_rate={rate:.1f} captured_bytes={captured} expected_bytes={expected}")
+            info("ssl_content_recovery=0.0")
             info("TRUNCATED marker found but tail secret missing — "
                  "tail offset may exceed TAIL_BUF_SIZE")
             return True
         elif has_secret:
             ok("Tail secret preserved (payload ≤64KB but still captured)")
+            info(f"ssl_capture_rate={rate:.1f} captured_bytes={captured} expected_bytes={expected}")
+            info(f"ssl_content_recovery=100.0 tail_secret={len(TAIL_SECRET)}/{len(TAIL_SECRET)}")
             return True
 
     if ssl_prompts:
+        rate = min(100.0, best_captured / expected * 100) if expected else 0.0
+        info(f"ssl_capture_rate={rate:.1f} captured_bytes={best_captured} expected_bytes={expected}")
+        info("ssl_content_recovery=0.0")
         info(f"{len(ssl_prompts)} SSL prompt events found but no TRUNCATED marker — "
              "payload may have been <64KB after API truncation")
         return True
 
+    info(f"ssl_capture_rate=0.0 captured_bytes=0 expected_bytes={expected}")
+    info("ssl_content_recovery=0.0")
     info("No SSL prompt events — API request may have failed (check API_KEY)")
     return True
 
@@ -220,6 +246,8 @@ def main():
     parser = argparse.ArgumentParser(description="eBPF SSL plaintext capture test")
     parser.add_argument("--skip-large", action="store_true")
     parser.add_argument("--skip-api",   action="store_true")
+    parser.add_argument("--keep-logs",  action="store_true",
+                        help="保留 ringbuf/loader 日志便于排查（默认失败时保留 ringbuf 日志）")
     args = parser.parse_args()
 
     if os.geteuid() != 0:
@@ -229,16 +257,43 @@ def main():
     loader_proc = ringbuf_proc = None
     rb_log = None
     try:
-        info("Starting eBPF monitor with auto-discovery...")
+        info("Starting eBPF monitor (manual target = self PID)...")
         loader_log = tempfile.NamedTemporaryFile(delete=False, suffix='.log')
         loader_proc = subprocess.Popen(
-            [str(LOADER), "-B", "--agent", "python3"],
+            ["stdbuf", "-oL", "-eL", str(LOADER), "-B", str(os.getpid())],
             stdout=loader_log, stderr=loader_log)
         info(f"Loader log: {loader_log.name}")
-        time.sleep(5)
-        if loader_proc.poll() is not None:
-            fail("Loader exited unexpectedly"); sys.exit(1)
-        ok("Loader started")
+
+        # 等待 loader 真正就绪：sys+SSL 挂载完成并完成身份注入（而非固定 sleep）
+        loader_ready = False
+        waited = 0
+        while waited < 20:
+            time.sleep(1)
+            waited += 1
+            if loader_proc.poll() is not None:
+                fail("Loader exited unexpectedly")
+                try:
+                    with open(loader_log.name, "r", encoding="utf-8", errors="replace") as f:
+                        print(f.read())
+                except Exception:
+                    pass
+                sys.exit(1)
+            try:
+                with open(loader_log.name, "r", encoding="utf-8", errors="replace") as f:
+                    if "双引擎探针部署完毕" in f.read():
+                        loader_ready = True
+                        break
+            except Exception:
+                pass
+        if not loader_ready:
+            fail("Loader did not become ready within 20s")
+            try:
+                with open(loader_log.name, "r", encoding="utf-8", errors="replace") as f:
+                    print(f.read())
+            except Exception:
+                pass
+            sys.exit(1)
+        ok("Loader started (SSL uprobe attached)")
 
         rb_log = tempfile.NamedTemporaryFile(delete=False, suffix='.rb.log', mode='w')
         ringbuf_proc = subprocess.Popen(
@@ -276,12 +331,76 @@ def main():
             print(f"  {'PASS' if r else 'FAIL'}  {name}")
         print("=" * 60)
 
+        if passed != total:
+            print("\n[DIAG] 部分测试失败，转储诊断信息...")
+            try:
+                with open(loader_log.name, "r", encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()
+                print("  ── loader 日志 (尾部 25 行) ──")
+                for ln in lines[-25:]:
+                    print("    " + ln.rstrip())
+            except Exception as exc:
+                print("  [DIAG] 读取 loader 日志失败:", exc)
+            # ── ringbuf 日志完整转储（关键：区分 SSL 事件是否到达 ringbuf）──
+            try:
+                with open(rb_log.name, "r", encoding="utf-8", errors="replace") as f:
+                    rb_lines = f.readlines()
+                ssl_cnt = sum(1 for ln in rb_lines if "SSL EVENT INTERCEPTED" in ln)
+                sys_cnt = sum(1 for ln in rb_lines if "系统行为" in ln)
+                raw_cnt = sum(1 for ln in rb_lines if "纯文本协议" in ln)
+                print(f"  ── ringbuf 日志统计: 共 {len(rb_lines)} 行, "
+                      f"SSL={ssl_cnt}, sys={sys_cnt}, raw={raw_cnt} ──")
+                print("  ── ringbuf 日志 (尾部 40 行) ──")
+                for ln in rb_lines[-40:]:
+                    print("    " + ln.rstrip())
+            except Exception as exc:
+                print("  [DIAG] 读取 ringbuf 日志失败:", exc)
+            try:
+                link_out = subprocess.run(["bpftool", "link", "list"],
+                                          capture_output=True, text=True, timeout=10)
+                ssl_links = [l for l in link_out.stdout.splitlines()
+                             if "SSL" in l or "ssl" in l]
+                print("  ── bpftool link list (SSL 相关) ──")
+                if ssl_links:
+                    for l in ssl_links[-15:]:
+                        print("    " + l)
+                else:
+                    print("    未发现 SSL 相关 attach（uprobe 可能未挂载）")
+            except Exception as exc:
+                print("  [DIAG] bpftool link list 失败:", exc)
+            # ── ssl_drop_counter 检查（bpf_ringbuf_reserve 是否丢包）──
+            try:
+                map_out = subprocess.run(["bpftool", "map", "list"],
+                                         capture_output=True, text=True, timeout=10)
+                drop_lines = [l for l in map_out.stdout.splitlines()
+                              if "ssl_drop_counter" in l]
+                if drop_lines:
+                    m = re.search(r"(\d+):", drop_lines[0])
+                    if m:
+                        dump_out = subprocess.run(
+                            ["bpftool", "map", "dump", "id", m.group(1)],
+                            capture_output=True, text=True, timeout=10)
+                        print("  ── ssl_drop_counter map ──")
+                        for ln in dump_out.stdout.splitlines():
+                            if "value" in ln:
+                                print("    " + ln.strip())
+                else:
+                    print("  [DIAG] 未找到 ssl_drop_counter map")
+            except Exception as exc:
+                print("  [DIAG] ssl_drop_counter 检查失败:", exc)
+
     finally:
         kill_proc(ringbuf_proc, "ringbuf_handler")
         kill_proc(loader_proc, "loader")
         if rb_log:
-            try: rb_log.close(); os.unlink(rb_log.name)
-            except Exception: pass
+            try:
+                rb_log.close()
+                if not args.keep_logs:
+                    os.unlink(rb_log.name)
+            except Exception:
+                pass
+        if args.keep_logs:
+            info(f"已保留日志: loader={loader_log.name}, ringbuf={rb_log.name if rb_log else 'N/A'}")
         info("Cleanup complete")
 
 

@@ -5,3 +5,7 @@ __pycache__/
 *.db
 *.db-wal
 *.db-shm
+
+# 测试可视化产物
+ebpf-multi-agent-monitor/test/logs/
+ebpf-multi-agent-monitor/test/reports/

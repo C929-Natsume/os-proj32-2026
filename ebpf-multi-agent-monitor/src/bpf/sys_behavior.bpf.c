@@ -149,6 +149,17 @@ static __always_inline bool is_known_tool_comm(void) {
     return false;
 }
 
+// 基础设施进程排除（ringbuf_handler / loader 自身的活动不产生监控事件，避免自我风暴）
+static __always_inline bool is_infrastructure_comm(void) {
+    char comm[MAX_COMM_LEN];
+    bpf_get_current_comm(&comm, sizeof(comm));
+    if (comm[0] == 'r' && comm[1] == 'i' && comm[2] == 'n' && comm[3] == 'g' &&
+        comm[4] == 'b' && comm[5] == 'u' && comm[6] == 'f') return true;   // ringbuf*
+    if (comm[0] == 'l' && comm[1] == 'o' && comm[2] == 'a' && comm[3] == 'd' &&
+        comm[4] == 'e' && comm[5] == 'r') return true;                     // loader
+    return false;
+}
+
 static __always_inline bool promote_to_sub_agent(__u32 pid) {
     struct process_context *child_ctx = bpf_map_lookup_elem(&monitored_pids, &pid);
     if (!child_ctx) return false;
@@ -304,7 +315,10 @@ static __always_inline int resolve_listen_peer(__u16 family, __u32 saddr, __u16 
 
 static __always_inline void submit_sys_event(__u32 event_type, __u64 pid_tgid, const char *filename) {
     __u32 pid = pid_tgid >> 32;
-    
+
+    // 基础设施进程（ringbuf_handler/loader）自身活动不产生事件，避免自我风暴
+    if (is_infrastructure_comm()) return;
+
     // 查找该进程所属的智能体上下文
     struct process_context *ctx = bpf_map_lookup_elem(&monitored_pids, &pid);
     if (!ctx) {
@@ -372,6 +386,8 @@ static __always_inline void submit_connect_event(__u64 pid_tgid,
                                                   struct sockaddr *uservaddr,
                                                   int addrlen) {
     __u32 pid = pid_tgid >> 32;
+
+    if (is_infrastructure_comm()) return;
 
     struct process_context *ctx = bpf_map_lookup_elem(&monitored_pids, &pid);
     if (!ctx) {
@@ -685,6 +701,8 @@ int BPF_PROG(trace_sched_switch_btf, bool preempt, struct task_struct *prev, str
 static __always_inline void submit_raw_event(__u32 pid, __u32 fd,
     const char *buf, size_t count, int direction, enum raw_data_source source, __u32 peer) {
 
+    if (is_infrastructure_comm()) return;
+
     struct process_context *ctx = bpf_map_lookup_elem(&monitored_pids, &pid);
     if (!ctx) {
         if (is_behavioral_discovery_enabled() && buf && count > 0) {
@@ -755,7 +773,14 @@ int BPF_KSYSCALL(sys_read_stdio, unsigned int fd, char *buf, size_t count) {
 
     struct process_context *pctx = bpf_map_lookup_elem(&monitored_pids, &pid);
     if (!pctx) {
-        if (!try_auto_register(&monitored_pids)) return 0;
+        if (!try_auto_register(&monitored_pids)) {
+            if (is_behavioral_discovery_enabled()) {
+                struct pending_arg p = {.buf_ptr = (__u64)buf, .fd = fd, .len = count,
+                                        .peer = 0, .source = RAW_SRC_STDIO};
+                bpf_map_update_elem(&pending_read, &tid, &p, BPF_ANY);
+            }
+            return 0;
+        }
         pctx = bpf_map_lookup_elem(&monitored_pids, &pid);
         if (!pctx) return 0;
     }
@@ -792,7 +817,11 @@ int BPF_KSYSCALL(sys_write_raw, unsigned int fd, char *buf, size_t count) {
 
     struct process_context *pctx = bpf_map_lookup_elem(&monitored_pids, &pid);
     if (!pctx) {
-        if (!try_auto_register(&monitored_pids)) return 0;
+        if (!try_auto_register(&monitored_pids)) {
+            if (is_behavioral_discovery_enabled() && buf && count > 0)
+                submit_raw_event(pid, fd, buf, count, 1, RAW_SRC_STDIO, 0);
+            return 0;
+        }
         pctx = bpf_map_lookup_elem(&monitored_pids, &pid);
         if (!pctx) return 0;
     }
@@ -820,7 +849,11 @@ int BPF_KSYSCALL(sys_sendto_raw, int fd, char *buf, size_t len, int flags,
 
     struct process_context *pctx = bpf_map_lookup_elem(&monitored_pids, &pid);
     if (!pctx) {
-        if (!try_auto_register(&monitored_pids)) return 0;
+        if (!try_auto_register(&monitored_pids)) {
+            if (is_behavioral_discovery_enabled() && buf && len > 0)
+                submit_raw_event(pid, fd, buf, len, 1, RAW_SRC_TCP, 0);
+            return 0;
+        }
         pctx = bpf_map_lookup_elem(&monitored_pids, &pid);
         if (!pctx) return 0;
     }
@@ -843,7 +876,14 @@ int BPF_KSYSCALL(sys_recvfrom_raw, int fd, char *buf, size_t len, int flags,
 
     struct process_context *pctx = bpf_map_lookup_elem(&monitored_pids, &pid);
     if (!pctx) {
-        if (!try_auto_register(&monitored_pids)) return 0;
+        if (!try_auto_register(&monitored_pids)) {
+            if (is_behavioral_discovery_enabled()) {
+                struct pending_arg p = {.buf_ptr = (__u64)buf, .fd = fd, .len = len,
+                                        .peer = 0, .source = RAW_SRC_TCP};
+                bpf_map_update_elem(&pending_recv, &tid, &p, BPF_ANY);
+            }
+            return 0;
+        }
         pctx = bpf_map_lookup_elem(&monitored_pids, &pid);
         if (!pctx) return 0;
     }

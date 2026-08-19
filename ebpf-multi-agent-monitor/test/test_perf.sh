@@ -164,15 +164,25 @@ stop_nc_server() {
 
 start_loader_and_rb() {
     local extra_args="${1:-}"
+    # 手动模式（传了目标 PID）才要求 SSL 管道 + 身份注入完成；自动发现模式宽松对待
+    local manual_mode=0
+    [ -n "$extra_args" ] && manual_mode=1
 
-    rm -f /sys/fs/bpf/sys_rb /sys/fs/bpf/ssl_rb /sys/fs/bpf/raw_rb /sys/fs/bpf/res_map 2>/dev/null || true
+    # 清理全部可能残留的 pin（SIGKILL 的 loader 不执行 teardown，会留下孤儿 pin）
+    rm -f /sys/fs/bpf/sys_rb /sys/fs/bpf/ssl_rb /sys/fs/bpf/raw_rb \
+          /sys/fs/bpf/res_map /sys/fs/bpf/listen_map \
+          /sys/fs/bpf/behavioral_discovery_enabled 2>/dev/null || true
 
     > "$LOADER_LOG"
     stdbuf -oL -eL $LOADER $extra_args > "$LOADER_LOG" 2>&1 &
     LOADER_PID=$!
 
+    # 等待条件：
+    #   手动模式：三个管道 pin 均存在【且】loader 日志出现"双引擎探针部署完毕"
+    #              （register_agent 完成后才打印，避免在残留 pin 上提前返回、保证目标已注册）
+    #   自动发现：sys_rb+raw_rb 存在【且】日志出现"系统调用监控挂载成功"（loader 系统引擎就绪）
     local waited=0
-    while [ "$waited" -lt 8 ]; do
+    while [ "$waited" -lt 12 ]; do
         sleep 1
         waited=$((waited + 1))
         if ! kill -0 "$LOADER_PID" 2>/dev/null; then
@@ -180,14 +190,32 @@ start_loader_and_rb() {
             cat "$LOADER_LOG"
             return 1
         fi
-        if [ -f "/sys/fs/bpf/sys_rb" ]; then
-            break
+        if [ "$manual_mode" -eq 1 ]; then
+            if [ -f "/sys/fs/bpf/sys_rb" ] && [ -f "/sys/fs/bpf/ssl_rb" ] && [ -f "/sys/fs/bpf/raw_rb" ] && \
+               grep -q "双引擎探针部署完毕" "$LOADER_LOG" 2>/dev/null; then
+                break
+            fi
+        else
+            if [ -f "/sys/fs/bpf/sys_rb" ] && [ -f "/sys/fs/bpf/raw_rb" ] && \
+               grep -q "系统调用监控挂载成功" "$LOADER_LOG" 2>/dev/null; then
+                break
+            fi
         fi
     done
-    if [ ! -f "/sys/fs/bpf/sys_rb" ]; then
-        echo "  ❌ loader BPF not ready in 8s"
-        cat "$LOADER_LOG"
-        return 1
+    if [ "$manual_mode" -eq 1 ]; then
+        if [ ! -f "/sys/fs/bpf/sys_rb" ] || [ ! -f "/sys/fs/bpf/ssl_rb" ] || [ ! -f "/sys/fs/bpf/raw_rb" ] || \
+           ! grep -q "双引擎探针部署完毕" "$LOADER_LOG" 2>/dev/null; then
+            echo "  ❌ loader BPF pipeline not fully ready within 12s (see $LOADER_LOG)"
+            cat "$LOADER_LOG"
+            return 1
+        fi
+    else
+        if [ ! -f "/sys/fs/bpf/sys_rb" ] || [ ! -f "/sys/fs/bpf/raw_rb" ] || \
+           ! grep -q "系统调用监控挂载成功" "$LOADER_LOG" 2>/dev/null; then
+            echo "  ❌ loader BPF sys pipeline not ready within 12s (see $LOADER_LOG)"
+            cat "$LOADER_LOG"
+            return 1
+        fi
     fi
 
     > "$RINGBUF_LOG"
@@ -204,6 +232,29 @@ start_loader_and_rb() {
         echo "  ❌ ringbuf_handler exited"
         cat "$RINGBUF_LOG"
         return 1
+    fi
+
+    # 等待 ringbuf_handler 真正连接上三个管道（其日志出现"成功连接三引擎数据管道"）
+    # 仅手动模式严格要求（自动发现模式下 ssl_rb 可能因无 agent 而延迟/缺失）
+    if [ "$manual_mode" -eq 1 ]; then
+        waited=0
+        while [ "$waited" -lt 8 ]; do
+            sleep 1
+            waited=$((waited + 1))
+            if ! kill -0 "$RINGBUF_PID" 2>/dev/null; then
+                echo "  ❌ ringbuf_handler exited while waiting for pipes"
+                cat "$RINGBUF_LOG"
+                return 1
+            fi
+            if grep -q "成功连接三引擎数据管道" "$RINGBUF_LOG" 2>/dev/null; then
+                break
+            fi
+        done
+        if ! grep -q "成功连接三引擎数据管道" "$RINGBUF_LOG" 2>/dev/null; then
+            echo "  ❌ ringbuf_handler did not connect to pipes within 8s"
+            cat "$RINGBUF_LOG"
+            return 1
+        fi
     fi
 
     return 0
@@ -327,14 +378,22 @@ validate_raw_probes() {
     echo "raw_test_net" | nc -w 1 127.0.0.1 19999 2>/dev/null || true
     rm -f "/tmp/.raw_probe_test.$$"
 
-    sleep 1
+    # 轮询等待 raw 事件出现（消除 1s 窗口竞态：ringbuf 搬运存在延迟）
+    local raw_count=0
+    local waited=0
+    while [ "$waited" -lt 6 ]; do
+        sleep 1
+        waited=$((waited + 1))
+        raw_count=$(grep -cE '(FD:|Source:)' "$ringbuf_log" 2>/dev/null || true)
+        if [ "$raw_count" -gt 0 ]; then
+            break
+        fi
+    done
 
     local ringbuf_lines
     ringbuf_lines=$(wc -l < "$ringbuf_log" 2>/dev/null || echo 0)
     local sys_count
     sys_count=$(grep -c '\-> Type:' "$ringbuf_log" 2>/dev/null || true)
-    local raw_count
-    raw_count=$(grep -cE '(FD:|Source:)' "$ringbuf_log" 2>/dev/null || true)
 
     echo "    ringbuf log: ${ringbuf_lines} 行, sys=${sys_count}, raw=${raw_count}"
 

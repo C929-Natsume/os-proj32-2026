@@ -62,11 +62,10 @@ void redis_shipper_close(void)
     }
 }
 
-/* ── SSL chunk reassembly (head+tail strategy) ── */
+/* ── SSL chunk reassembly (N-chunk full capture) ── */
 #define REASSEMBLY_STREAMS_MAX  64
 #define REASSEMBLY_TIMEOUT_SEC  5
-#define TRUNCATION_MARKER       "\n[...TRUNCATED...]\n"
-#define MARKER_LEN              21
+#define MAX_CHUNKS_PER_STREAM   32
 
 struct chunk_hold {
     __u64 stream_key;
@@ -77,8 +76,10 @@ struct chunk_hold {
     __u32 total_len;
     int   rw;
     char  comm[MAX_COMM_LEN];
-    __u8  head_raw[MAX_BUF_SIZE];
-    __u32 head_raw_len;
+    __u16 total_chunks;
+    __u32 received_mask;
+    __u8 *chunks[MAX_CHUNKS_PER_STREAM];
+    __u32 chunk_lens[MAX_CHUNKS_PER_STREAM];
 };
 static struct chunk_hold g_hold[REASSEMBLY_STREAMS_MAX];
 
@@ -103,6 +104,8 @@ static struct chunk_hold *hold_alloc(__u32 tid, __u64 ts_ns)
     for (int i = 0; i < REASSEMBLY_STREAMS_MAX; i++) {
         if (!g_hold[i].in_use ||
             now - g_hold[i].first_seen > REASSEMBLY_TIMEOUT_SEC) {
+            for (int j = 0; j < g_hold[i].total_chunks; j++)
+                free(g_hold[i].chunks[j]);
             memset(&g_hold[i], 0, sizeof(g_hold[i]));
             g_hold[i].stream_key = key;
             g_hold[i].first_seen  = now;
@@ -116,7 +119,11 @@ static struct chunk_hold *hold_alloc(__u32 tid, __u64 ts_ns)
 static void hold_free(__u32 tid, __u64 ts_ns)
 {
     struct chunk_hold *h = hold_find(tid, ts_ns);
-    if (h) h->in_use = 0;
+    if (h) {
+        for (int j = 0; j < h->total_chunks; j++)
+            free(h->chunks[j]);
+        h->in_use = 0;
+    }
 }
 
 int ship_sys_event(struct sys_event *event)
@@ -182,41 +189,57 @@ int ship_ssl_event(struct probe_SSL_data_t *event)
 
     uint32_t mapped_event_type = (event->rw == 0) ? EVENT_SSL_READ : EVENT_SSL_WRITE;
 
-    /* ── chunk reassembly (head+tail) ── */
-    if (event->chunk_total == 2) {
-        if (event->chunk_index == 0) {
-            struct chunk_hold *h = hold_alloc(event->tid, event->timestamp_ns);
-            if (!h) return -1;
-            h->pid         = event->pid;
-            h->tid         = event->tid;
-            h->uid         = event->uid;
-            h->agent_id    = event->agent_id;
-            __builtin_memcpy(h->agent_name, event->agent_name, sizeof(h->agent_name));
-            h->total_len   = event->len;
-            h->rw          = event->rw;
-            __builtin_memcpy(h->comm, event->comm, sizeof(h->comm));
-            __builtin_memcpy(h->head_raw, event->buf, event->buf_size);
-            h->head_raw_len = event->buf_size;
-            return 0;
-        }
-
+    /* ── chunk reassembly (N-chunk full capture) ── */
+    if (event->chunk_total > 1) {
         struct chunk_hold *h = hold_find(event->tid, event->timestamp_ns);
-        if (!h) goto ship_single;
-
-        __u32 combined_len = h->head_raw_len + MARKER_LEN + event->buf_size;
-        __u8 *combined = malloc(combined_len);
-        if (!combined) {
-            hold_free(event->tid, event->timestamp_ns);
-            return -1;
+        if (!h) {
+            h = hold_alloc(event->tid, event->timestamp_ns);
+            if (!h) return -1;
+            h->pid          = event->pid;
+            h->tid          = event->tid;
+            h->uid          = event->uid;
+            h->agent_id     = event->agent_id;
+            __builtin_memcpy(h->agent_name, event->agent_name, sizeof(h->agent_name));
+            h->total_len    = event->len;
+            h->rw           = event->rw;
+            __builtin_memcpy(h->comm, event->comm, sizeof(h->comm));
+            h->total_chunks = event->chunk_total;
         }
-        memcpy(combined,                              h->head_raw,  h->head_raw_len);
-        memcpy(combined + h->head_raw_len,            TRUNCATION_MARKER, MARKER_LEN);
-        memcpy(combined + h->head_raw_len + MARKER_LEN, event->buf,  event->buf_size);
+
+        __u16 idx = event->chunk_index;
+        if (idx < MAX_CHUNKS_PER_STREAM && !h->chunks[idx]) {
+            h->chunks[idx] = malloc(event->buf_size);
+            if (h->chunks[idx]) {
+                memcpy(h->chunks[idx], event->buf, event->buf_size);
+                h->chunk_lens[idx] = event->buf_size;
+                h->received_mask |= (1u << idx);
+            }
+        }
+
+        /* check if all chunks arrived */
+        __u32 full_mask = (h->total_chunks < 32)
+            ? ((1u << h->total_chunks) - 1)
+            : 0xFFFFFFFFu;
+        if ((h->received_mask & full_mask) != full_mask)
+            return 0;  /* not yet complete */
+
+        /* ── all chunks arrived → concatenate → base64 → ship ── */
+        __u32 combined_len = 0;
+        for (__u16 i = 0; i < h->total_chunks; i++)
+            combined_len += h->chunk_lens[i];
+
+        __u8 *combined = malloc(combined_len);
+        if (!combined) { hold_free(event->tid, event->timestamp_ns); return -1; }
+        __u32 pos = 0;
+        for (__u16 i = 0; i < h->total_chunks; i++) {
+            memcpy(combined + pos, h->chunks[i], h->chunk_lens[i]);
+            pos += h->chunk_lens[i];
+        }
 
         int b64_alloc = 4 * (combined_len + 2) / 3 + 16;
-        char *b64_combined = malloc(b64_alloc);
-        if (!b64_combined) { free(combined); hold_free(event->tid, event->timestamp_ns); return -1; }
-        base64_encode(combined, combined_len, b64_combined);
+        char *b64 = malloc(b64_alloc);
+        if (!b64) { free(combined); hold_free(event->tid, event->timestamp_ns); return -1; }
+        base64_encode(combined, combined_len, b64);
         free(combined);
 
         struct agent_state *state = get_or_create_agent(event->pid, event->pid, event->comm,
@@ -224,11 +247,11 @@ int ship_ssl_event(struct probe_SSL_data_t *event)
         if (!state) state = get_or_create_ssl_fallback_agent(event);
         if (state) {
             update_metrics_for_ssl_event(state, mapped_event_type,
-                                         (const char *)h->head_raw, h->head_raw_len);
+                                         (const char *)h->chunks[0], h->chunk_lens[0]);
             publish_metrics_if_needed(state, event->timestamp_ns);
             publish_message_event(state, "ssl",
                 mapped_event_type == EVENT_SSL_WRITE ? "prompt" : "response",
-                b64_combined, h->total_len, event->timestamp_ns, event->pid, event->tid);
+                b64, h->total_len, event->timestamp_ns, event->pid, event->tid);
 
             char escaped_comm2[32];
             json_escape(event->comm, escaped_comm2, sizeof(escaped_comm2));
@@ -239,14 +262,14 @@ int ship_ssl_event(struct probe_SSL_data_t *event)
                     "{\"type\":%u,\"pid\":%u,\"ppid\":%u,\"timestamp\":%llu,\"comm\":\"%s\","
                     "\"data_len\":%u,\"data\":\"%s\",\"agent_id\":\"%s\",\"main_pid\":%u}",
                     mapped_event_type, event->pid, event->pid, event->timestamp_ns,
-                    escaped_comm2, h->total_len, b64_combined, state->agent_id, state->main_pid);
+                    escaped_comm2, h->total_len, b64, state->agent_id, state->main_pid);
                 redisReply *reply = redisCommand(redis_ctx, "PUBLISH %s %s", REDIS_CHANNEL, ssl_msg_value);
                 finish_redis_command("redisCommand", reply);
                 free(ssl_msg_value);
             }
         }
 
-        free(b64_combined);
+        free(b64);
         hold_free(event->tid, event->timestamp_ns);
         return 0;
     }

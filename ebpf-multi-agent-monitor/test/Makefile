@@ -6,6 +6,9 @@ TEST_BINS = test_unit test_functional
 
 LIBBPF_LIB_DIR ?= /usr/lib/x86_64-linux-gnu
 
+# 测试二进制内嵌的 BPF 骨架（由 src/user/Makefile 从 .bpf.c 重新生成后必须重编测试）
+BPF_SKELS = $(BUILD_DIR)/sys_behavior.skel.h $(BUILD_DIR)/ssl_sniffer.skel.h
+
 CC = gcc
 CFLAGS = -Wall -Wextra -Wno-unused-parameter -Wno-unused-result -g -O2 \
          -I$(BPF_DIR) \
@@ -26,7 +29,7 @@ all: $(TEST_BINS)
 test_unit: test_unit.c $(USER_DIR)/event_serializer.c
 	$(CC) $(CFLAGS) -o $@ test_unit.c $(USER_DIR)/event_serializer.c $(LDFLAGS)
 
-test_functional: test_functional.c $(BPF_DIR)/sys_behavior.c $(BPF_DIR)/agent_registry.c
+test_functional: test_functional.c $(BPF_DIR)/sys_behavior.c $(BPF_DIR)/agent_registry.c $(BPF_SKELS)
 	$(CC) $(CFLAGS) -o $@ test_functional.c \
 		$(BPF_DIR)/sys_behavior.c \
 		$(BPF_DIR)/agent_registry.c \

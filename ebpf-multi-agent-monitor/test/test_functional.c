@@ -368,6 +368,7 @@ static void test_event_integrity(void) {
             printf("  ✗ integrity: %s\n", reason);
             tests_failed++;
         } else {
+            printf("  ✓ integrity: event[%d] OK\n", i);
             tests_passed++;
         }
     }

@@ -1,0 +1,3 @@
+终端1: sudo ebpf-multi-agent-monitor/build/loader -B
+终端2: sudo ebpf-multi-agent-monitor/build/ringbuf_handler
+终端3: ebpf-multi-agent-monitor/test/simagent
