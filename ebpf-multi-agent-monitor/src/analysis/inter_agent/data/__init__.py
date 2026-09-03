@@ -5,6 +5,7 @@ from .baseline_calibrator import BaselineCalibrator
 from .text_encoder import ContentFeatureExtractor, DEFAULT_CONTENT_DIM
 from .dataset_builder import build_topology_dataset, build_temporal_dataset, build_real_dataset
 from .features import extract_node_features, extract_edge_attributes, NODE_FEATURE_DIM, EDGE_FEATURE_DIM
+from .fingerprint_bank import CommunicationFingerprintBank, ChannelStats
 
 SAFE_METRICS = {"cpu_usage": 0.15, "memory_usage": 0.25,
     "api_call_count": 15, "msg_sent": 8, "msg_received": 6,
@@ -19,4 +20,5 @@ __all__ = [
     "build_topology_dataset", "build_temporal_dataset", "build_real_dataset",
     "extract_node_features", "extract_edge_attributes",
     "NODE_FEATURE_DIM", "EDGE_FEATURE_DIM", "SAFE_METRICS",
+    "CommunicationFingerprintBank", "ChannelStats",
 ]

@@ -30,7 +30,7 @@ detection:
 
   # Message anomaly
   message_freq_std_threshold: 2.5
-  cascade_agent_threshold: 5
+  cascade_agent_threshold: 8
   data_size_mb_threshold: 100.0
 
   # Temporal
@@ -46,6 +46,33 @@ detection:
   # Anomaly decision thresholds (calibrated from evaluation)
   anomaly_threshold: 0.3
   semantic_rule_threshold: 0.5
+
+  # Semantic rule checker: online Bayesian boundary adaptation
+  # (P0: enabled by default - suppression of over-firing rules + drift absorption)
+  semantic:
+    adaptive: true
+    forget_alpha: 0.02
+    burn_in: 20
+    clamp_min: 0.5
+    clamp_max: 1.5
+    posterior_min: 0.6
+    initial_std_ratio: 0.2
+    posterior_path: "models/semantic_posterior.json"
+    weak_label_hi: 0.6
+    weak_label_lo: 0.3
+
+  # Communication fingerprint bank (Stage A): per-channel traffic profiles
+  # learned from normal observations. Default off => no effect on the report.
+  fingerprint:
+    enabled: false
+    forget_alpha: 0.1
+    z_threshold: 3.0
+    min_samples: 5
+    unknown_penalty: 1.0
+    magnitude_scale: 2.0
+    weight: 0.1
+    learn_online: true
+    bank_path: "models/fingerprint_bank.json"
 
   # Response decision thresholds
   response_alert: 0.3
@@ -64,6 +91,8 @@ model:
   dropout: 0.1
   feature_weight: 0.65
   model_path: "models/anomaly_detector.pth"
+  # P1: sparse structure decoding (O(E) instead of O(N^2)); metric-equivalent
+  sparse_struct: true
 
 # LLM / AutoGen API
 llm:
@@ -80,5 +109,5 @@ intervention:
 
 # Logging
 log:
-  output_dir: "../../logs/inter_log"
+  output_dir: "../../../logs/inter_log"
 

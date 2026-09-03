@@ -28,7 +28,7 @@
     {
       "id": 1,
       "database_name": "分析库",
-      "database_uri": "/mnt/e/os2026/ebpf-multi-agent-monitor/logs/alerts/analysis.db",
+      "database_uri": "/home/gabriel/comp/project3136859-387615/ebpf-multi-agent-monitor/logs/alerts/analysis.db",
       "database_type": "sqlite",
       "database_description": "真实告警分析库，来源于 /mnt/e/os2026/ebpf-multi-agent-monitor",
       "created_at": "2026-06-18T04:58:34.476Z",

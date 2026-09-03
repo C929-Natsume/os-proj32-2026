@@ -1,8 +1,17 @@
+import logging
 import networkx as nx
 import numpy as np
 from typing import Dict, List, Optional, Tuple
 
-from inter_agent.data.features import NODE_FEATURE_DIM, EDGE_FEATURE_DIM
+from inter_agent.data.features import (
+    NODE_FEATURE_DIM,
+    EDGE_FEATURE_DIM,
+    _DATA_SIZE_DIVISOR,
+    _MSG_COUNT_DIVISOR,
+    extract_node_features,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class AgentInteractionGraph:
@@ -24,6 +33,10 @@ class AgentInteractionGraph:
         interactions = obs.get("interactions", [])
 
         active_agents = set(agents_data.keys())
+        if len(active_agents) > self._max_agents:
+            logger.warning("Observation has %d agents (max_agents=%d); graph "
+                           "will hold all of them.",
+                           len(active_agents), self._max_agents)
         for aid in active_agents:
             self._add_agent(aid)
 
@@ -42,8 +55,10 @@ class AgentInteractionGraph:
                 self._graph.add_edge(
                     src, dst,
                     type=it.get("type", "message"),
-                    weight=it.get("weight", 1.0),
+                    weight=it.get("weight", 0.5),
                     timestamp_ns=it.get("timestamp_ns", 0),
+                    data_size=float(it.get("data_size", 0)),
+                    msg_count=float(it.get("msg_count", 0)),
                 )
 
         self._rebuild_index()
@@ -59,7 +74,8 @@ class AgentInteractionGraph:
             self._agent_to_idx[node] = i
             self._idx_to_agent[i] = node
 
-    def to_pyg_data(self):
+    def to_pyg_data(self, agents_data: Optional[dict] = None,
+                    interactions: Optional[list] = None):
         try:
             import torch
         except ImportError:
@@ -67,19 +83,29 @@ class AgentInteractionGraph:
         n = self.node_count
         if n == 0:
             return None
-        x = torch.zeros((n, NODE_FEATURE_DIM), dtype=torch.float)
+        node_ids = [self._idx_to_agent[i] for i in range(n)]
+        if agents_data is not None:
+            x_np = extract_node_features(agents_data, node_ids, interactions)
+            x = torch.from_numpy(x_np).float()
+        else:
+            x = torch.zeros((n, NODE_FEATURE_DIM), dtype=torch.float)
         edge_indices = []
         edge_attrs = []
-        type_map = {"api_call": 0, "message": 1, "file_share": 2}
+        # one-hot edge type in TRAINING format: message=0, api_call=1, file_share=2
+        type_map = {"message": 0, "api_call": 1, "file_share": 2, "bypass": 1}
         for u, v, d in self._graph.edges(data=True):
             i = self._agent_to_idx.get(u)
             j = self._agent_to_idx.get(v)
             if i is None or j is None:
                 continue
             edge_indices.append([i, j])
-            t = type_map.get(d.get("type", "message"), 1)
-            w = d.get("weight", 1.0)
-            edge_attrs.append([t, w, 0.0, 0.0, 0.0, 0.0])
+            t = type_map.get(d.get("type", "message"), 0)
+            onehot = [0.0, 0.0, 0.0]
+            onehot[t] = 1.0
+            w = float(d.get("weight", 0.5))
+            ds = min(float(d.get("data_size", 0)) / _DATA_SIZE_DIVISOR, 1.0)
+            mc = min(float(d.get("msg_count", 0)) / _MSG_COUNT_DIVISOR, 1.0)
+            edge_attrs.append(onehot + [w, ds, mc])
         edge_index = torch.tensor(edge_indices, dtype=torch.long).t() if edge_indices else torch.zeros((2, 0), dtype=torch.long)
         edge_attr_t = torch.tensor(edge_attrs, dtype=torch.float) if edge_attrs else torch.zeros((0, EDGE_FEATURE_DIM), dtype=torch.float)
         return (x, edge_index, edge_attr_t)

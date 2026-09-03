@@ -1,10 +1,19 @@
 """Semantic anomaly rule checker — 11 MAST Section 2+3 types via metric/message patterns.
 No LLM API needed. Each rule is a purely structural check (O(1) per observation).
+
+Supports optional online Bayesian boundary adaptation (see adaptive_bounds.py):
+  - adaptive=False (default): byte-identical to the static checker.
+  - adaptive=True: rule boundaries follow the drifting normal baseline and
+    per-rule Beta posteriors dampen over-firing rules.
 """
 
 import base64
+import json
 import logging
-from typing import Dict, List, Tuple, Callable
+import os
+from typing import Dict, List, Optional
+
+from inter_agent.detection.adaptive_bounds import AdaptiveBoundaryState
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +46,56 @@ class SemanticRuleChecker:
     (verified against val_labeled.json normal-data distributions).
     """
 
-    @staticmethod
-    def _rule_stale_state(agents: dict, messages: list, interactions: list,
-                           agent_ids: List[str]) -> Dict[str, float]:
+    # ── adaptive boundary registry ────────────────────────────────────────
+    # (rule, metric, anchor, direction). Anchors are the hardcoded values the
+    # static checker uses; direction is "upper" (fire when metric exceeds the
+    # bound) or "lower" (fire when metric falls below the bound).
+    ADAPTIVE_BOUNDS = [
+        ("stale_state", "fs_unlink_count", 2, "upper"),
+        ("state_conflict", "fs_write_count", 20, "upper"),
+        ("partial_visibility", "fs_open_count", 2, "lower"),
+        ("partial_visibility", "unique_files_count", 3, "lower"),
+        ("timeout_retry", "api_call_count", 30, "upper"),
+        ("timeout_retry", "fs_write_count", 25, "upper"),
+        ("timeout_retry", "net_send_count", 30, "upper"),
+        ("task_derailment", "proc_exec_count", 4, "upper"),
+        ("task_derailment", "api_call_count", 20, "upper"),
+        ("concealment", "cpu_usage", 0.85, "upper"),
+        ("concealment", "memory_usage", 0.85, "upper"),
+        ("premature_convergence", "api_call_count", 3, "lower"),
+        ("premature_convergence", "fs_read_count", 5, "lower"),
+        ("message_storm", "msg_received", 30, "upper"),
+    ]
+
+    # (metric -> (init_mean, init_std)) — normal-baseline seed for the online
+    # statistics, aligned with SAFE_METRICS / val_labeled normal data.
+    ADAPTIVE_SEEDS = {
+        "fs_unlink_count": (0.0, 0.5),
+        "fs_write_count": (15.0, 6.0),
+        "fs_open_count": (30.0, 10.0),
+        "unique_files_count": (10.0, 4.0),
+        "api_call_count": (15.0, 6.0),
+        "net_send_count": (10.0, 4.0),
+        "proc_exec_count": (3.0, 1.5),
+        "cpu_usage": (0.15, 0.08),
+        "memory_usage": (0.25, 0.10),
+        "fs_read_count": (40.0, 12.0),
+        "msg_received": (6.0, 3.0),
+    }
+
+    # ── rules ─────────────────────────────────────────────────────────────
+
+    def _bound(self, rule: str, metric: str, anchor: float, direction: str) -> float:
+        """Effective metric boundary for a rule (anchor unless adaptive)."""
+        return self._adaptive.bound(rule, metric, anchor, direction)
+
+    def _rule_stale_state(self, agents: dict, messages: list, interactions: list,
+                          agent_ids: List[str]) -> Dict[str, float]:
         """fs_unlink>=2 or zero-activity agent (cpu=0, mem=0, api=0)."""
         scores = {}
         stale_keywords = ["unchanged", "cached", "not modified",
                           "no change", "still the same", "data is stable"]
+        unlink_th = self._bound("stale_state", "fs_unlink_count", 2, "upper")
         for aid in agent_ids:
             info = agents.get(aid, {})
             fs_unlink = info.get("fs_unlink_count", 0)
@@ -53,7 +105,7 @@ class SemanticRuleChecker:
             if cpu == 0 and mem == 0 and api == 0:
                 scores[aid] = 0.55
                 continue
-            if fs_unlink < 2:
+            if fs_unlink < unlink_th:
                 continue
             sem_hint = _has_keyword_in_messages(messages, aid, stale_keywords)
             if sem_hint:
@@ -62,32 +114,32 @@ class SemanticRuleChecker:
                 scores[aid] = 0.55 + min(fs_unlink * 0.02, 0.20)
         return scores
 
-    @staticmethod
-    def _rule_state_conflict(agents: dict, messages: list, interactions: list,
-                              agent_ids: List[str]) -> Dict[str, float]:
+    def _rule_state_conflict(self, agents: dict, messages: list, interactions: list,
+                             agent_ids: List[str]) -> Dict[str, float]:
         """2 agents with fs_write>20 (normal max=20)."""
+        w_th = self._bound("state_conflict", "fs_write_count", 20, "upper")
         agents_high = [aid for aid in agent_ids
-                       if agents.get(aid, {}).get("fs_write_count", 0) > 20]
+                       if agents.get(aid, {}).get("fs_write_count", 0) > w_th]
         if len(agents_high) >= 2:
             return {aid: 0.8 for aid in agents_high}
         return {}
 
-    @staticmethod
-    def _rule_partial_visibility(agents: dict, messages: list, interactions: list,
-                                  agent_ids: List[str]) -> Dict[str, float]:
+    def _rule_partial_visibility(self, agents: dict, messages: list, interactions: list,
+                                 agent_ids: List[str]) -> Dict[str, float]:
         """fs_open<=2 AND unique<=3 (normal: fs_open=2-8, unique=2-8)."""
         scores = {}
+        open_th = self._bound("partial_visibility", "fs_open_count", 2, "lower")
+        unique_th = self._bound("partial_visibility", "unique_files_count", 3, "lower")
         for aid in agent_ids:
             info = agents.get(aid, {})
             fs_open = info.get("fs_open_count", 0)
             unique = info.get("unique_files_count", 0)
-            if fs_open <= 2 and unique <= 3:
+            if fs_open <= open_th and unique <= unique_th:
                 scores[aid] = 0.7
         return scores
 
-    @staticmethod
-    def _rule_message_disorder(agents: dict, messages: list, interactions: list,
-                                 agent_ids: List[str]) -> Dict[str, float]:
+    def _rule_message_disorder(self, agents: dict, messages: list, interactions: list,
+                               agent_ids: List[str]) -> Dict[str, float]:
         """Reply timestamp < request timestamp, or identical timestamps with different content."""
         scores = {}
         msgs = [m for m in messages if m.get("src") in agent_ids]
@@ -96,8 +148,8 @@ class SemanticRuleChecker:
             t2 = msgs[i + 1].get("timestamp_ns", 0)
             # Strict inversion: later message has earlier timestamp
             if t1 > t2 and t1 > 0 and t2 > 0:
-                scores[msgs[i].get("src", "")] = 0.6
-                scores[msgs[i + 1].get("src", "")] = 0.6
+                scores[msgs[i].get("src", "")] = 0.9
+                scores[msgs[i + 1].get("src", "")] = 0.9
             # Same timestamp but different content suggests incorrect ordering
             elif t1 == t2 and t1 > 0:
                 c1 = msgs[i].get("content", "")
@@ -107,18 +159,20 @@ class SemanticRuleChecker:
                     scores[msgs[i + 1].get("src", "")] = 0.5
         return scores
 
-    @staticmethod
-    def _rule_timeout_retry(agents: dict, messages: list, interactions: list,
-                              agent_ids: List[str]) -> Dict[str, float]:
+    def _rule_timeout_retry(self, agents: dict, messages: list, interactions: list,
+                            agent_ids: List[str]) -> Dict[str, float]:
         """api>30 or fs_write>25 (original), or net_send>=30 + message mentions retry/timeout."""
         scores = {}
         retry_keywords = ["retry", "timeout", "again", "re-send", "repeating"]
+        api_th = self._bound("timeout_retry", "api_call_count", 30, "upper")
+        w_th = self._bound("timeout_retry", "fs_write_count", 25, "upper")
+        send_th = self._bound("timeout_retry", "net_send_count", 30, "upper")
         for aid in agent_ids:
             info = agents.get(aid, {})
             api = info.get("api_call_count", 0)
             fs_write = info.get("fs_write_count", 0)
             net_send = info.get("net_send_count", 0)
-            metric_hit = api > 30 or fs_write > 25 or net_send >= 30
+            metric_hit = api > api_th or fs_write > w_th or net_send >= send_th
             if not metric_hit:
                 continue
             sem_hint = _has_keyword_in_messages(messages, aid, retry_keywords)
@@ -138,9 +192,8 @@ class SemanticRuleChecker:
                 scores[aid] = min(0.70, score_val)
         return scores
 
-    @staticmethod
-    def _rule_ignore_input(agents: dict, messages: list, interactions: list,
-                             agent_ids: List[str]) -> Dict[str, float]:
+    def _rule_ignore_input(self, agents: dict, messages: list, interactions: list,
+                           agent_ids: List[str]) -> Dict[str, float]:
         """msg_received >= msg_sent+1 AND has incoming message (or all agents if no messages)."""
         scores = {}
         targeted = set()
@@ -158,10 +211,9 @@ class SemanticRuleChecker:
                 scores[aid] = 0.7
         return scores
 
-    @staticmethod
-    def _rule_reasoning_action_mismatch(agents: dict, messages: list,
-                                         interactions: list,
-                                         agent_ids: List[str]) -> Dict[str, float]:
+    def _rule_reasoning_action_mismatch(self, agents: dict, messages: list,
+                                        interactions: list,
+                                        agent_ids: List[str]) -> Dict[str, float]:
         """shell_exec>0 or sensitive_file>0 (both ALWAYS 0 in normal)."""
         scores = {}
         for aid in agent_ids:
@@ -172,9 +224,8 @@ class SemanticRuleChecker:
                 scores[aid] = min(1.0, 0.7 + shell * 0.1 + sensitive * 0.15)
         return scores
 
-    @staticmethod
-    def _rule_wrong_assumption(agents: dict, messages: list, interactions: list,
-                                agent_ids: List[str]) -> Dict[str, float]:
+    def _rule_wrong_assumption(self, agents: dict, messages: list, interactions: list,
+                               agent_ids: List[str]) -> Dict[str, float]:
         """net_connect=0 AND net_send=0 (normal: net_c=1-5, net_s=16-29 — ALWAYS non-zero)."""
         scores = {}
         for aid in agent_ids:
@@ -186,64 +237,71 @@ class SemanticRuleChecker:
                 scores[aid] = 0.8
         return scores
 
-    @staticmethod
-    def _rule_task_derailment(agents: dict, messages: list, interactions: list,
-                               agent_ids: List[str]) -> Dict[str, float]:
+    def _rule_task_derailment(self, agents: dict, messages: list, interactions: list,
+                              agent_ids: List[str]) -> Dict[str, float]:
         """proc_exec>=4 AND api>=20 (normal: proc=1, api=4-6)."""
         scores = {}
+        proc_th = self._bound("task_derailment", "proc_exec_count", 4, "upper")
+        api_th = self._bound("task_derailment", "api_call_count", 20, "upper")
         for aid in agent_ids:
             info = agents.get(aid, {})
             proc_exec = info.get("proc_exec_count", 0)
             api = info.get("api_call_count", 0)
-            if proc_exec >= 4 and api >= 20:
+            if proc_exec >= proc_th and api >= api_th:
                 scores[aid] = min(1.0, 0.7 + (proc_exec - 4) * 0.05 + (api - 20) * 0.005)
         return scores
 
-    @staticmethod
-    def _rule_concealment(agents: dict, messages: list, interactions: list,
-                           agent_ids: List[str]) -> Dict[str, float]:
+    def _rule_concealment(self, agents: dict, messages: list, interactions: list,
+                          agent_ids: List[str]) -> Dict[str, float]:
         """cpu>0.85 AND mem>0.85 (normal: cpu=0.3-0.6, mem=0.3-0.5)."""
         scores = {}
+        cpu_th = self._bound("concealment", "cpu_usage", 0.85, "upper")
+        mem_th = self._bound("concealment", "memory_usage", 0.85, "upper")
         for aid in agent_ids:
             info = agents.get(aid, {})
             cpu = info.get("cpu_usage", 0)
             mem = info.get("memory_usage", 0)
-            if cpu > 0.85 and mem > 0.85:
+            if cpu > cpu_th and mem > mem_th:
                 scores[aid] = min(1.0, 0.7 + (cpu - 0.85) * 2 + (mem - 0.85) * 2)
         return scores
 
-    @staticmethod
-    def _rule_premature_convergence(agents: dict, messages: list,
-                                     interactions: list,
-                                     agent_ids: List[str]) -> Dict[str, float]:
+    def _rule_premature_convergence(self, agents: dict, messages: list,
+                                    interactions: list,
+                                    agent_ids: List[str]) -> Dict[str, float]:
         """api<=3 AND fs_read<=5 (normal: api=4-6, fs_read=10-40)."""
         scores = {}
+        api_th = self._bound("premature_convergence", "api_call_count", 3, "lower")
+        read_th = self._bound("premature_convergence", "fs_read_count", 5, "lower")
         for aid in agent_ids:
             info = agents.get(aid, {})
             api = info.get("api_call_count", 0)
             fs_read = info.get("fs_read_count", 0)
-            if api <= 3 and fs_read <= 5:
+            if api <= api_th and fs_read <= read_th:
                 scores[aid] = 0.55
         return scores
 
-    @staticmethod
-    def _rule_supervisor_bypass(agents: dict, messages: list, interactions: list,
-                                  agent_ids: List[str],
-                                  topology: str = "unknown") -> Dict[str, float]:
-        """Agent-agent bypass edges (type=bypass) between worker agents."""
-        if topology != "hierarchical":
-            return {}
+    def _rule_supervisor_bypass(self, agents: dict, messages: list, interactions: list,
+                                agent_ids: List[str],
+                                topology: str = "unknown") -> Dict[str, float]:
+        """2+ agent-agent bypass edges between worker agents.
+
+        A single bypass edge occurs in normal observations (1/obs max); the
+        supervisor-bypass injection adds 3 directed worker pairs (n>=4), so
+        require >=2 edges to avoid false positives on normal chatter.
+        """
         aid_set = set(agent_ids)
+        bypass_count = 0
         for it in interactions:
             src = it.get("src", "")
             dst = it.get("dst", "")
             if src in aid_set and dst in aid_set and it.get("type") == "bypass":
-                return {agent_ids[0]: 0.8}
+                bypass_count += 1
+        if bypass_count >= 2:
+            return {agent_ids[0]: 0.8}
         return {}
 
-    @staticmethod
-    def _rule_group_split(agents: dict, messages: list, interactions: list,
-                           agent_ids: List[str]) -> Dict[str, float]:
+    def _rule_group_split(self, agents: dict, messages: list, interactions: list,
+                          agent_ids: List[str]) -> Dict[str, float]:
         """Cross-group agent-to-agent edges with low weight (group fragmentation)."""
         if len(agent_ids) < 2:
             return {}
@@ -267,20 +325,25 @@ class SemanticRuleChecker:
                     agent_ids[mid]: min(0.70, 0.40 + 0.04 * cross_count)}
         return {}
 
-    @staticmethod
-    def _rule_flood_from_single(agents: dict, messages: list, interactions: list,
-                                 agent_ids: List[str]) -> Dict[str, float]:
-        """Single source sends to 3+ distinct targets in interactions or messages."""
+    def _rule_flood_from_single(self, agents: dict, messages: list, interactions: list,
+                                agent_ids: List[str]) -> Dict[str, float]:
+        """Single source sends to 3+ distinct agent targets.
+
+        Only agent-to-agent targets count (both src and dst are agents):
+        external entities (AgentA/AgentB) and dense interaction hubs are
+        normal coordination, not a peer flood.
+        """
+        agent_set = set(agent_ids)
         src_dsts = {}
         for it in interactions:
             src = it.get("src", "")
             dst = it.get("dst", "")
-            if src in agent_ids:
+            if src in agent_set and dst in agent_set:
                 src_dsts.setdefault(src, set()).add(dst)
         for m in messages:
             src = m.get("src", "")
             dst = m.get("dst", "")
-            if src in agent_ids:
+            if src in agent_set and dst in agent_set:
                 src_dsts.setdefault(src, set()).add(dst)
         for src, dsts in src_dsts.items():
             threshold = 3 if len(agent_ids) >= 6 else (2 if len(agent_ids) >= 3 else 99)
@@ -288,51 +351,81 @@ class SemanticRuleChecker:
                 return {src: min(0.75, 0.45 + 0.06 * len(dsts))}
         return {}
 
-    @staticmethod
-    def _rule_message_storm(agents: dict, messages: list, interactions: list,
-                             agent_ids: List[str]) -> Dict[str, float]:
+    def _rule_message_storm(self, agents: dict, messages: list, interactions: list,
+                            agent_ids: List[str]) -> Dict[str, float]:
         """Agent with high msg_received and many incoming interactions."""
         incoming = {}
         for it in interactions:
             dst = it.get("dst", "")
             if dst in agent_ids:
                 incoming[dst] = incoming.get(dst, 0) + 1
+        recv_th = self._bound("message_storm", "msg_received", 30, "upper")
         for aid in agent_ids:
             info = agents.get(aid, {})
             recv = info.get("msg_received", 0)
             inc = incoming.get(aid, 0)
-            if recv >= 30 and inc >= 5:
+            if recv >= recv_th and inc >= 5:
                 score = min(0.80, 0.45 + 0.01 * recv)
                 return {aid: score}
         return {}
 
     # ── Rule registry ──
 
-    RULES: List[Tuple[str, Callable[..., Dict[str, float]]]] = [
-        ("stale_state",             _rule_stale_state.__func__),
-        ("state_conflict",          _rule_state_conflict.__func__),
-        ("partial_visibility",      _rule_partial_visibility.__func__),
-        ("message_disorder",        _rule_message_disorder.__func__),
-        ("timeout_retry",           _rule_timeout_retry.__func__),
-        ("ignore_input",            _rule_ignore_input.__func__),
-        ("reasoning_action_mismatch", _rule_reasoning_action_mismatch.__func__),
-        ("wrong_assumption",        _rule_wrong_assumption.__func__),
-        ("task_derailment",         _rule_task_derailment.__func__),
-        ("concealment",             _rule_concealment.__func__),
-        ("premature_convergence",   _rule_premature_convergence.__func__),
-        ("supervisor_bypass",       _rule_supervisor_bypass.__func__),
-        ("group_split",             _rule_group_split.__func__),
-        ("flood_from_single",       _rule_flood_from_single.__func__),
-        ("message_storm",           _rule_message_storm.__func__),
+    RULES: List[str] = [
+        "stale_state",
+        "state_conflict",
+        "partial_visibility",
+        "message_disorder",
+        "timeout_retry",
+        "ignore_input",
+        "reasoning_action_mismatch",
+        "wrong_assumption",
+        "task_derailment",
+        "concealment",
+        "premature_convergence",
+        "supervisor_bypass",
+        "group_split",
+        "flood_from_single",
+        "message_storm",
     ]
 
     # ── Public API ──
 
-    def __init__(self, risk_threshold: float = 0.5):
+    def __init__(self, risk_threshold: float = 0.5,
+                 adaptive: bool = False,
+                 adaptive_cfg: Optional[dict] = None,
+                 posterior_path: Optional[str] = None):
         self._risk_threshold = risk_threshold
+        self._posterior_path = posterior_path
+        cfg = adaptive_cfg or {}
+        self._adaptive_cfg = cfg
+        self._adaptive = AdaptiveBoundaryState(
+            adaptive=bool(adaptive),
+            forget_alpha=cfg.get("forget_alpha", 0.02),
+            burn_in=cfg.get("burn_in", 20),
+            clamp_min=cfg.get("clamp_min", 0.5),
+            clamp_max=cfg.get("clamp_max", 1.5),
+            posterior_min=cfg.get("posterior_min", 0.6),
+            initial_std_ratio=cfg.get("initial_std_ratio", 0.2),
+        )
+        for metric, (mean, std) in self.ADAPTIVE_SEEDS.items():
+            self._adaptive.seed_metric(metric, mean)
+        for rule, metric, anchor, direction in self.ADAPTIVE_BOUNDS:
+            self._adaptive.register_bound(rule, metric, anchor, direction)
+        if adaptive and posterior_path and os.path.isfile(posterior_path):
+            try:
+                with open(posterior_path, "r", encoding="utf-8") as f:
+                    self._adaptive.load_state(json.load(f))
+            except Exception as e:
+                logger.warning("Failed to load semantic posterior %s: %s",
+                               posterior_path, e)
+
+    @property
+    def adaptive(self) -> bool:
+        return self._adaptive.adaptive
 
     def check(self, obs: dict) -> dict:
-        """Run all 11 rules against a single observation."""
+        """Run all rules against a single observation."""
         agents_data = obs.get("agents", {})
         agent_ids = list(agents_data.keys())
         messages = obs.get("messages", [])
@@ -342,7 +435,8 @@ class SemanticRuleChecker:
         all_agent_scores: Dict[str, float] = {}
         types_found: Dict[str, Dict[str, float]] = {}
 
-        for type_name, rule_fn in self.RULES:
+        for type_name in self.RULES:
+            rule_fn = getattr(self, "_rule_" + type_name)
             try:
                 if type_name == "supervisor_bypass":
                     per_agent = rule_fn(agents_data, messages, interactions,
@@ -352,8 +446,12 @@ class SemanticRuleChecker:
             except Exception as e:
                 logger.warning("Rule %s raised: %s", type_name, e)
                 per_agent = {}
+            scale = self._adaptive.rule_scale(type_name)
             for aid, risk in per_agent.items():
                 if risk <= 0.0 or aid not in agent_ids:
+                    continue
+                risk *= scale
+                if risk <= 0.0:
                     continue
                 all_agent_scores[aid] = max(all_agent_scores.get(aid, 0.0), risk)
                 types_found.setdefault(type_name, {})[aid] = risk
@@ -370,6 +468,68 @@ class SemanticRuleChecker:
 
     def is_anomalous(self, obs: dict) -> bool:
         return self.check(obs)["overall_risk"] >= self._risk_threshold
+
+    def update(self, obs: dict, p_anomaly: Optional[float] = None):
+        """Online Bayesian update from a (possibly labelled) observation.
+
+        No-op unless adaptive mode is enabled. The rule check runs first so the
+        firing decision uses the pre-update bounds; normal observations then
+        update the per-metric baseline (absorbing drift) and any rule that
+        still fired on them is recorded as a false positive. Anomalous
+        observations never pollute the baseline and only feed true-positive
+        feedback to the fired rules.
+
+        ``p_anomaly`` enables weak-label gating for live data that has no
+        ground-truth label: only decisive confidence counts as evidence
+        (``p >= weak_label_hi`` -> TP, ``p <= weak_label_lo`` -> FP), while
+        ambiguous windows skip the Beta update entirely so they cannot inflate
+        the posterior. When ``p_anomaly`` is None the hard label on the obs is
+        used (stored/demo mode keeps the previous behaviour).
+        """
+        if not self._adaptive.adaptive:
+            return
+        try:
+            if p_anomaly is None:
+                label = obs.get("label")
+                atype = obs.get("_anomaly_type")
+                anomalous = bool(label) or bool(
+                    atype and atype not in ("", "normal", None))
+            else:
+                hi = float(self._adaptive_cfg.get("weak_label_hi", 0.6))
+                lo = float(self._adaptive_cfg.get("weak_label_lo", 0.3))
+                if p_anomaly >= hi:
+                    anomalous = True
+                elif p_anomaly <= lo:
+                    anomalous = False
+                else:
+                    anomalous = None
+
+            result = self.check(obs)
+            fired = result.get("anomaly_types", [])
+            agents_data = obs.get("agents", {})
+            if anomalous is False:
+                for metric in self.ADAPTIVE_SEEDS:
+                    for aid, info in agents_data.items():
+                        if metric in info:
+                            self._adaptive.update_normal_metric(metric, info[metric])
+            if anomalous is not None:
+                for rule in fired:
+                    self._adaptive.update_beta(rule, tp=anomalous, fp=not anomalous)
+            self.persist()
+        except Exception as e:
+            logger.warning("Semantic adaptive update failed: %s", e)
+
+    def persist(self):
+        if not self._posterior_path:
+            return
+        try:
+            d = os.path.dirname(os.path.abspath(self._posterior_path))
+            if d and not os.path.isdir(d):
+                os.makedirs(d, exist_ok=True)
+            with open(self._posterior_path, "w", encoding="utf-8") as f:
+                json.dump(self._adaptive.to_dict(), f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning("Failed to persist semantic posterior: %s", e)
 
     def get_evidence(self, obs: dict) -> dict:
         """Return per-agent evidence for each triggered rule."""
@@ -456,7 +616,8 @@ class SemanticRuleChecker:
             "intra_agent_alert": lambda info: {"src": "", "risk": 0},
         }
 
-        for type_name, rule_fn in self.RULES:
+        for type_name in self.RULES:
+            rule_fn = getattr(self, "_rule_" + type_name)
             try:
                 if type_name == "supervisor_bypass":
                     per_agent = rule_fn(agents_data, messages, interactions,

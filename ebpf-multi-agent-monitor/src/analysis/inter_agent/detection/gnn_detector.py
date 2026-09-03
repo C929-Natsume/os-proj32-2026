@@ -152,13 +152,15 @@ if HAS_TORCH:
                      feature_weight=0.65, struct_weight=None,
                      edge_weight=0.2,
                      encoder_type="gcn", n_layers=1,
-                     variant="deterministic", edge_dim=None):
+                     variant="deterministic", edge_dim=None,
+                     sparse_struct=False):
             super().__init__()
             self.variant = variant
             self.feature_weight = feature_weight
             self.edge_weight = edge_weight
             self.struct_weight = struct_weight if struct_weight is not None else (1.0 - feature_weight - edge_weight)
             self.edge_dim = edge_dim
+            self.sparse_struct = sparse_struct
 
             EncoderClass = ENCODER_REGISTRY.get(encoder_type, GCNEncoder)
             if encoder_type == "gat":
@@ -218,12 +220,94 @@ if HAS_TORCH:
                 edge_recon = self.edge_decoder(z, edge_index) if self.edge_decoder and edge_attr is not None else None
                 return x_recon, adj_recon, edge_recon, z
 
+        def _sample_negatives(self, n, edge_index, num_neg, device):
+            """Sample random non-edge pairs (u,v), u!=v, excluding self-loops.
+
+            Bounded at ~400k candidates per pass so the sparse decoder never
+            materialises the O(N^2) adjacency. Returns [K, 2] long tensor.
+            """
+            if num_neg <= 0:
+                return torch.zeros((0, 2), dtype=torch.long, device=device)
+            diag = torch.arange(n, device=device) * n + torch.arange(n, device=device)
+            forbidden = diag
+            if edge_index.size(1) > 0:
+                forbidden = torch.cat(
+                    [forbidden, edge_index[0] * n + edge_index[1]]
+                )
+            forbidden = torch.unique(forbidden)
+            total = n * n
+            if forbidden.numel() >= total:
+                return torch.zeros((0, 2), dtype=torch.long, device=device)
+            need = num_neg
+            out_u, out_v = [], []
+            for _ in range(3):
+                if need <= 0:
+                    break
+                c = min(need * 8, 400_000)
+                u = torch.randint(n, (c,), device=device)
+                v = torch.randint(n, (c,), device=device)
+                cand = u * n + v
+                valid = ~torch.isin(cand, forbidden)
+                u, v = u[valid], v[valid]
+                take = min(u.numel(), need)
+                out_u.append(u[:take])
+                out_v.append(v[:take])
+                need -= take
+                if u.numel() < take:
+                    break
+            if not out_u:
+                return torch.zeros((0, 2), dtype=torch.long, device=device)
+            return torch.stack([torch.cat(out_u), torch.cat(out_v)], dim=1)
+
+        def _sparse_pairs(self, n, edge_index, device):
+            """Positive (edges + self-loops) and sampled negative pairs."""
+            pos_u = torch.arange(n, device=device)
+            pos_v = torch.arange(n, device=device)
+            if edge_index.size(1) > 0:
+                pos_u = torch.cat([pos_u, edge_index[0]])
+                pos_v = torch.cat([pos_v, edge_index[1]])
+            pos = torch.stack([pos_u, pos_v], dim=1)
+            num_neg = pos.size(0)
+            neg = self._sample_negatives(n, edge_index, num_neg, device)
+            if neg.size(0) == 0:
+                return pos, neg
+            return pos, neg
+
+        def _sparse_struct_logits(self, z, pairs):
+            """Dot-product decoder logits at the given pairs only (no NxN)."""
+            z_t = self.struct_decoder.linear(z)
+            zu = z_t[pairs[:, 0]]
+            zv = z_t[pairs[:, 1]]
+            return (zu * zv).sum(dim=1)
+
+        def _reconstruct(self, x, edge_index, edge_attr=None):
+            """Encode + decode without materialising the dense adjacency.
+
+            Returns (x_recon, edge_recon, z, mu, log_var) where edge_recon is
+            None when edge features are absent. In sparse_struct mode this
+            avoids the O(N^2) ``adj_recon`` entirely.
+            """
+            z = self.encode(x, edge_index, edge_attr)
+            mu = log_var = None
+            if self.variant == "variational":
+                mu = self.mu_proj(z)
+                log_var = self.log_var_proj(z)
+                z = self.reparameterize(mu, log_var)
+            else:
+                z = self.latent_proj(z)
+            x_recon = self.attr_decoder(z)
+            edge_recon = self.edge_decoder(z, edge_index) if self.edge_decoder and edge_attr is not None else None
+            return x_recon, edge_recon, z, mu, log_var
+
         def compute_loss(self, x, edge_index, edge_attr=None, topology=None):
             """Compute DOMINANT loss with feat + struct + edge terms.
 
             For VGAE variant, adds KL divergence loss.
             """
-            if self.variant == "variational":
+            if self.sparse_struct:
+                x_recon, edge_recon, z, mu, log_var = self._reconstruct(x, edge_index, edge_attr)
+                adj_recon = None
+            elif self.variant == "variational":
                 x_recon, adj_recon, edge_recon, _, mu, log_var = self.forward(x, edge_index, edge_attr)
             else:
                 x_recon, adj_recon, edge_recon, _ = self.forward(x, edge_index, edge_attr)
@@ -231,13 +315,29 @@ if HAS_TORCH:
             feat_var = x.var(dim=0).mean().detach() + 1e-8
             feat_loss = F.mse_loss(x_recon, x, reduction="mean") / feat_var
 
-            adj_true = build_adjacency_matrix(x.size(0), edge_index)
-            n_pos = adj_true.sum()
-            n_neg = adj_true.numel() - n_pos
-            pos_weight = (n_neg / n_pos).detach() if n_pos > 0 else torch.tensor(1.0)
-            struct_loss = F.binary_cross_entropy_with_logits(
-                adj_recon, adj_true, pos_weight=pos_weight, reduction="mean"
-            )
+            if self.sparse_struct:
+                n = x.size(0)
+                pos, neg = self._sparse_pairs(n, edge_index, x.device)
+                pos_logits = self._sparse_struct_logits(z, pos)
+                pos_loss = F.binary_cross_entropy_with_logits(
+                    pos_logits, torch.ones_like(pos_logits), reduction="mean"
+                )
+                if neg.size(0) > 0:
+                    neg_logits = self._sparse_struct_logits(z, neg)
+                    neg_loss = F.binary_cross_entropy_with_logits(
+                        neg_logits, torch.zeros_like(neg_logits), reduction="mean"
+                    )
+                    struct_loss = (pos_loss * neg.size(0) + neg_loss * pos.size(0)) / (pos.size(0) + neg.size(0))
+                else:
+                    struct_loss = pos_loss
+            else:
+                adj_true = build_adjacency_matrix(x.size(0), edge_index)
+                n_pos = adj_true.sum()
+                n_neg = adj_true.numel() - n_pos
+                pos_weight = (n_neg / n_pos).detach() if n_pos > 0 else torch.tensor(1.0)
+                struct_loss = F.binary_cross_entropy_with_logits(
+                    adj_recon, adj_true, pos_weight=pos_weight, reduction="mean"
+                )
 
             loss = self.feature_weight * feat_loss.clamp(max=1e3) + self.struct_weight * struct_loss
 
@@ -253,6 +353,93 @@ if HAS_TORCH:
 
             return loss, feat_loss, struct_loss, edge_loss
 
+        def compute_loss_batched(self, x, edge_index, edge_attr, ptr):
+            """Per-graph-exact DOMINANT loss over a PyG Batch (block-diagonal).
+
+            Encodes all graphs in one batched forward (message passing never
+            crosses graph boundaries on a block-diagonal edge_index, so the
+            batched embeddings match per-graph encoding exactly), then decodes
+            and normalizes per graph so feat_var / dense-struct semantics are
+            identical to running ``compute_loss`` per sample.
+
+            Args:
+                x: [N_total, F] concatenated node features
+                edge_index: [2, E_total] block-diagonal edges
+                edge_attr: [E_total, D] or None
+                ptr: [B + 1] cumulative node offsets (Batch.ptr)
+
+            Returns tuple matching ``compute_loss`` (loss, feat, struct, edge
+            [, kl]) averaged over graphs.
+            """
+            z = self.encode(x, edge_index, edge_attr)
+            if self.variant == "variational":
+                mu = self.mu_proj(z)
+                log_var = self.log_var_proj(z)
+                z = self.reparameterize(mu, log_var)
+            else:
+                z = self.latent_proj(z)
+
+            n_graphs = ptr.size(0) - 1
+            losses = []
+            for g in range(n_graphs):
+                lo, hi = int(ptr[g]), int(ptr[g + 1])
+                x_g = x[lo:hi]
+                z_g = z[lo:hi]
+                edge_mask = (edge_index[0] >= lo) & (edge_index[0] < hi)
+                ei_g = edge_index[:, edge_mask] - lo
+                ea_g = edge_attr[edge_mask] if edge_attr is not None else None
+
+                x_recon = self.attr_decoder(z_g)
+                feat_var = x_g.var(dim=0).mean().detach() + 1e-8
+                feat_loss = F.mse_loss(x_recon, x_g, reduction="mean") / feat_var
+
+                if self.sparse_struct:
+                    pos, neg = self._sparse_pairs(x_g.size(0), ei_g, x_g.device)
+                    pos_logits = self._sparse_struct_logits(z_g, pos)
+                    pos_loss = F.binary_cross_entropy_with_logits(
+                        pos_logits, torch.ones_like(pos_logits), reduction="mean"
+                    )
+                    if neg.size(0) > 0:
+                        neg_logits = self._sparse_struct_logits(z_g, neg)
+                        neg_loss = F.binary_cross_entropy_with_logits(
+                            neg_logits, torch.zeros_like(neg_logits), reduction="mean"
+                        )
+                        struct_loss = (pos_loss * neg.size(0) + neg_loss * pos.size(0)) / (pos.size(0) + neg.size(0))
+                    else:
+                        struct_loss = pos_loss
+                else:
+                    adj_recon = self.struct_decoder(z_g)
+                    adj_true = build_adjacency_matrix(x_g.size(0), ei_g)
+                    n_pos = adj_true.sum()
+                    n_neg = adj_true.numel() - n_pos
+                    pos_weight = (n_neg / n_pos).detach() if n_pos > 0 else torch.tensor(1.0)
+                    struct_loss = F.binary_cross_entropy_with_logits(
+                        adj_recon, adj_true, pos_weight=pos_weight, reduction="mean"
+                    )
+
+                loss = self.feature_weight * feat_loss.clamp(max=1e3) + self.struct_weight * struct_loss
+
+                edge_loss = torch.tensor(0.0)
+                if self.edge_decoder is not None and ea_g is not None and ea_g.size(0) > 0:
+                    edge_recon = self.edge_decoder(z_g, ei_g)
+                    edge_loss = F.mse_loss(edge_recon, ea_g, reduction="mean")
+                    loss = loss + self.edge_weight * edge_loss.clamp(max=1e3)
+
+                if self.variant == "variational":
+                    kl_loss = -0.5 * torch.mean(
+                        1 + log_var[lo:hi] - mu[lo:hi].pow(2) - log_var[lo:hi].exp()
+                    )
+                    loss = loss + kl_loss
+                losses.append((loss, feat_loss, struct_loss, edge_loss))
+
+            mean = lambda t: torch.stack([l[t] for l in losses]).mean()
+            if self.variant == "variational":
+                kl_mean = -0.5 * torch.mean(
+                    1 + log_var - mu.pow(2) - log_var.exp()
+                )
+                return mean(0), mean(1), mean(2), mean(3), kl_mean
+            return mean(0), mean(1), mean(2), mean(3)
+
         def compute_anomaly_scores(self, x, edge_index, edge_attr=None, topology=None):
             """Per-node anomaly scores based on reconstruction error.
 
@@ -264,15 +451,37 @@ if HAS_TORCH:
 
             Returns (node_scores, feat_err_mean, struct_err_mean, edge_err_mean, z).
             """
-            if self.variant == "variational":
+            if self.sparse_struct:
+                x_recon, edge_recon, z, mu, log_var = self._reconstruct(x, edge_index, edge_attr)
+                adj_recon = None
+            elif self.variant == "variational":
                 x_recon, adj_recon, edge_recon, z, _, _ = self.forward(x, edge_index, edge_attr)
             else:
                 x_recon, adj_recon, edge_recon, z = self.forward(x, edge_index, edge_attr)
 
-            adj_true = build_adjacency_matrix(x.size(0), edge_index)
             feat_err = (x - x_recon).pow(2).mean(dim=1).detach().cpu().numpy()
-            adj_probs = torch.sigmoid(adj_recon)
-            struct_err = (adj_probs - adj_true).pow(2).mean(dim=1).detach().cpu().numpy()
+            if self.sparse_struct:
+                n = x.size(0)
+                pos, neg = self._sparse_pairs(n, edge_index, z.device)
+                with torch.no_grad():
+                    all_pairs = pos if neg.size(0) == 0 else torch.cat([pos, neg], dim=0)
+                    targets = torch.cat([
+                        torch.ones(pos.size(0), device=z.device),
+                        torch.zeros(neg.size(0), device=z.device),
+                    ])
+                    pair_err = (torch.sigmoid(self._sparse_struct_logits(z, all_pairs)) - targets).pow(2)
+                    node_err = torch.zeros(n, device=z.device)
+                    node_count = torch.zeros(n, device=z.device)
+                    ones = torch.ones(pair_err.size(0), device=z.device)
+                    node_err.index_add_(0, all_pairs[:, 0], pair_err)
+                    node_err.index_add_(0, all_pairs[:, 1], pair_err)
+                    node_count.index_add_(0, all_pairs[:, 0], ones)
+                    node_count.index_add_(0, all_pairs[:, 1], ones)
+                    struct_err = (node_err / node_count.clamp(min=1)).detach().cpu().numpy()
+            else:
+                adj_true = build_adjacency_matrix(x.size(0), edge_index)
+                adj_probs = torch.sigmoid(adj_recon)
+                struct_err = (adj_probs - adj_true).pow(2).mean(dim=1).detach().cpu().numpy()
 
             scores = self.feature_weight * feat_err + self.struct_weight * struct_err
 
@@ -365,7 +574,7 @@ class AnomalyDetector:
     def __init__(self, node_dim=None, hidden_dim=64, latent_dim=64,
                  feature_weight=0.3, model_path=None,
                  encoder_type="gcn", n_layers=1, variant="deterministic",
-                 anomaly_threshold=0.5):
+                 anomaly_threshold=0.5, sparse_struct=False):
         self._node_dim = node_dim if node_dim is not None else NODE_FEATURE_DIM
         self._latent_dim = latent_dim
         self._feature_weight = feature_weight
@@ -379,6 +588,7 @@ class AnomalyDetector:
                 node_dim, hidden_dim, latent_dim, feature_weight,
                 encoder_type=encoder_type, n_layers=n_layers,
                 variant=variant, edge_dim=EDGE_FEATURE_DIM,
+                sparse_struct=sparse_struct,
             )
             self._classifier = AnomalyClassifier(latent_dim)
             if model_path and os.path.isfile(model_path):

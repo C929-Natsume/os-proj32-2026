@@ -1,0 +1,84 @@
+# Inter-Agent Anomaly Detection Configuration
+# Thresholds aligned with intra_agent patterns (intra_analyzer.c)
+
+redis:
+  host: "127.0.0.1"
+  port: 6379
+  db: 0
+  password: null
+  window_seconds: 30
+  message_limit: 100
+  anomaly_limit: 50
+
+agents:
+  max_agents: 16
+  default_agents: 4
+
+detection:
+  # Resource anomaly thresholds
+  cpu_usage_max: 0.8
+  memory_usage_max: 0.8
+
+  # Logic / loop detection (aligned with intra_agent's loop window)
+  api_call_freq_max: 50
+  msg_freq_max: 30
+  loop_window_ns: 30000000000    # 30s (matches LOOP_WINDOW_NS)
+
+  # Propagation
+  propagation_risk_threshold: 0.5
+  propagation_max_hops: 4
+
+  # Message anomaly
+  message_freq_std_threshold: 2.5
+  cascade_agent_threshold: 5
+  data_size_mb_threshold: 100.0
+
+  # Temporal
+  temporal_window: 10
+  temporal_risk_threshold: 0.6
+
+  # Score combination weights (used when GNN model is loaded)
+  gnn_weight: 0.35
+  rule_weight: 0.35
+  temporal_weight: 0.15
+  semantic_rule_weight: 0.15
+
+  # Anomaly decision thresholds (calibrated from evaluation)
+  anomaly_threshold: 0.3
+  semantic_rule_threshold: 0.5
+
+  # Response decision thresholds
+  response_alert: 0.3
+  response_block: 0.7
+  response_isolate: 0.9
+
+  # LLM escalation
+  llm_escalation_threshold: 0.7
+
+model:
+  node_dim: 30
+  edge_dim: 6
+  hidden_dim: 64
+  latent_dim: 64
+  num_heads: 4
+  dropout: 0.1
+  feature_weight: 0.65
+  model_path: "models/anomaly_detector.pth"
+
+# LLM / AutoGen API
+llm:
+  api_base_url: "https://api.example.com/v1"
+  api_key: "sk-your-api-key-here"
+  model: "your-model-name"
+
+intervention:
+  enabled: true
+  auto_isolate_risk: 0.8
+
+# Semantic rule checker (11 MAST Section 2+3 types, no API needed)
+# Configured via detection.semantic_rule_weight and detection.semantic_rule_threshold above.
+
+# Logging
+log:
+  output_dir: "../../logs/inter_log"
+

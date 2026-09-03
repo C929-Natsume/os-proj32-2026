@@ -1,0 +1,25 @@
+{
+  "num_agents": 4,
+  "agent_ids": [
+    "agent_0",
+    "agent_1",
+    "agent_2",
+    "agent_3"
+  ],
+  "train_unlabeled": 842,
+  "train_labeled": 1682,
+  "val_labeled": 359,
+  "test_labeled": 359,
+  "normal_total": 1202,
+  "anomaly_total": 1198,
+  "sources": [
+    "autogen_hierarchical_20260625_011045.jsonl",
+    "autogen_hierarchical_20260625_011136.jsonl",
+    "autogen_hierarchical_20260625_011227.jsonl",
+    "autogen_hierarchical_20260625_011316.jsonl",
+    "autogen_peer-to-peer_20260625_011114.jsonl",
+    "autogen_peer-to-peer_20260625_011206.jsonl",
+    "autogen_peer-to-peer_20260625_011255.jsonl",
+    "autogen_peer-to-peer_20260625_011345.jsonl"
+  ]
+}

@@ -650,7 +650,7 @@ class BaselineCalibrator:
                         )
 
                     obs["label"] = 1
-                    obs["_anomaly_target"] = f"{target}↔{','.join(new_partners)}"
+                    obs["_anomaly_target"] = f"{target}->{','.join(new_partners)}"
                     obs["_anomaly_type"] = "topology_anomaly"
                 else:
                     DataRecorder._inject_anomaly(

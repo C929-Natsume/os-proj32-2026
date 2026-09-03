@@ -50,6 +50,10 @@ def inject_sem_message_disorder(obs, aids, **kw):
                 "content": f"msg_{i}", "timestamp_ns": i * 1000,
                 "data": "", "msg_type": "request"})
         msgs = obs.get("messages", [])
+    else:
+        base_ts = msgs[0].get("timestamp_ns", 0) or obs.get("timestamp", 0)
+        for i, m in enumerate(msgs):
+            m["timestamp_ns"] = base_ts + i * 1000000
     obs["messages"] = list(reversed(msgs))
     obs["label"] = 1
     obs["_anomaly_type"] = "message_disorder"

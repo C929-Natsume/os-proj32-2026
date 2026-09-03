@@ -13,7 +13,7 @@ class MessageAnomalyDetector:
       4. Data size anomaly: message payload size exceeds threshold
     """
 
-    def __init__(self, freq_std_threshold=2.5, cascade_threshold=5,
+    def __init__(self, freq_std_threshold=2.5, cascade_threshold=8,
                  data_size_mb=100.0):
         self._freq_std = freq_std_threshold
         self._cascade_th = cascade_threshold
