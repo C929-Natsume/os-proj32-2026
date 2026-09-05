@@ -18,7 +18,7 @@ REDIS_HOST   = "127.0.0.1"
 REDIS_PORT   = 6379
 
 API_URL  = os.environ.get("TEST_API_URL", "https://api.deepseek.com/chat/completions")
-API_KEY  = os.environ.get("TEST_API_KEY", "sk-dcfcfb4164814cd9b9143afc0e150f91")
+API_KEY  = os.environ.get("TEST_API_KEY", "")
 API_MODEL = os.environ.get("TEST_API_MODEL", "deepseek-chat")
 
 # Force-load libssl.so.3 into process memory BEFORE loader scans /proc/self/maps
