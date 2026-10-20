@@ -1,0 +1,138 @@
+{
+  "adaptive": true,
+  "metrics": {
+    "fs_unlink_count": {
+      "mean": 4.396730106121088e-230,
+      "var": 1e-09,
+      "n": 38312.0
+    },
+    "fs_write_count": {
+      "mean": 9.390928114198402,
+      "var": 3.182580109925983,
+      "n": 38312.0
+    },
+    "fs_open_count": {
+      "mean": 5.725445200101008,
+      "var": 43.06279051066881,
+      "n": 38312.0
+    },
+    "unique_files_count": {
+      "mean": 4.862278692836922,
+      "var": 2.120529777634432,
+      "n": 38312.0
+    },
+    "api_call_count": {
+      "mean": 7.976876378281353,
+      "var": 9.358881634650333,
+      "n": 38312.0
+    },
+    "net_send_count": {
+      "mean": 6.367198483211115,
+      "var": 41.37639776435777,
+      "n": 38312.0
+    },
+    "proc_exec_count": {
+      "mean": 0.662101129951518,
+      "var": 0.6240783495055793,
+      "n": 38312.0
+    },
+    "cpu_usage": {
+      "mean": 0.2664235929238012,
+      "var": 0.0015523331228112552,
+      "n": 38312.0
+    },
+    "memory_usage": {
+      "mean": 0.366423592923793,
+      "var": 0.0015523331228131365,
+      "n": 38312.0
+    },
+    "fs_read_count": {
+      "mean": 18.9777641927094,
+      "var": 37.429140138357596,
+      "n": 38312.0
+    },
+    "msg_received": {
+      "mean": 2.2669034171814366,
+      "var": 0.9963762346911077,
+      "n": 38312.0
+    }
+  },
+  "betas": {
+    "supervisor_bypass": {
+      "alpha": 323.0,
+      "beta": 1.0
+    },
+    "partial_visibility": {
+      "alpha": 375.0,
+      "beta": 3.0
+    },
+    "timeout_retry": {
+      "alpha": 1146.0,
+      "beta": 4.0
+    },
+    "premature_convergence": {
+      "alpha": 525.0,
+      "beta": 1.0
+    },
+    "wrong_assumption": {
+      "alpha": 567.0,
+      "beta": 1.0
+    },
+    "ignore_input": {
+      "alpha": 579.0,
+      "beta": 3.0
+    },
+    "message_storm": {
+      "alpha": 269.0,
+      "beta": 1.0
+    },
+    "stale_state": {
+      "alpha": 379.0,
+      "beta": 2.0
+    },
+    "reasoning_action_mismatch": {
+      "alpha": 868.0,
+      "beta": 2.0
+    },
+    "state_conflict": {
+      "alpha": 519.0,
+      "beta": 281.0
+    },
+    "task_derailment": {
+      "alpha": 419.0,
+      "beta": 4.0
+    },
+    "flood_from_single": {
+      "alpha": 925.0,
+      "beta": 1.0
+    },
+    "message_disorder": {
+      "alpha": 12.0,
+      "beta": 1.0
+    },
+    "group_split": {
+      "alpha": 7.0,
+      "beta": 1.0
+    },
+    "concealment": {
+      "alpha": 14.0,
+      "beta": 1.0
+    }
+  },
+  "ks": {
+    "stale_state|fs_unlink_count|2|upper": 63245.553203367585,
+    "state_conflict|fs_write_count|20|upper": 1.6666666666666667,
+    "partial_visibility|fs_open_count|2|lower": 4.666666666666667,
+    "partial_visibility|unique_files_count|3|lower": 3.5,
+    "timeout_retry|api_call_count|30|upper": 5.0,
+    "timeout_retry|fs_write_count|25|upper": 3.3333333333333335,
+    "timeout_retry|net_send_count|30|upper": 10.0,
+    "task_derailment|proc_exec_count|4|upper": 1.6666666666666665,
+    "task_derailment|api_call_count|20|upper": 1.6666666666666667,
+    "concealment|cpu_usage|0.85|upper": 23.333333333333332,
+    "concealment|memory_usage|0.85|upper": 11.999999999999998,
+    "premature_convergence|api_call_count|3|lower": 4.0,
+    "premature_convergence|fs_read_count|5|lower": 4.375,
+    "message_storm|msg_received|30|upper": 19.999999999999996
+  }
+}

@@ -1,0 +1,1803 @@
+======================================================
+[edge] state_conflict (MEDIUM)
+risk=0.619  time=2026-08-11 12:26:51
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Find all log files modified in the last ..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[semantic association]
+  sender: agent_0 -> receiver: Worker1
+  content: "Find all log files modified in the last hour"
+[root cause]
+  Agent claimed exclusive access on a shared resource, but another agent also wrote to the same resource concurrently — state inconsistency between agents
+[view]
+  topology=hierarchical  agents=8  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4, agent_5, agent_6, agent_7
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker, agent_5=Worker, agent_6=Worker, agent_7=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+  ... and 7 additional alerts suppressed
+======================================================
+[node] task_derailment (HIGH)
+risk=1.000  time=2026-08-11 12:26:51
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Find all log files modified in the last ..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[root cause]
+  Anomaly type 'task_derailment' detected in observation
+[view]
+  topology=hierarchical  agents=8  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4, agent_5, agent_6, agent_7
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker, agent_5=Worker, agent_6=Worker, agent_7=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+======================================================
+[node] stale_state (MEDIUM)
+risk=0.619  time=2026-08-11 12:26:51
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Check system uptime and load average"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "
+
+```bash
+uptime
+```"
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Check system uptime and load average"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[semantic association]
+  sender: agent_1 -> receiver: AgentA
+  content: "Check system uptime and load average"
+[root cause]
+  Agent idle (cpu=0, memory=0, api_calls=0) — zero activity, state may be stale
+[view]
+  topology=peer-to-peer  agents=8  edges=8
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4, agent_5, agent_6, agent_7
+  roles: agent_0=Peer, agent_1=Peer, agent_2=Peer, agent_3=Peer, agent_4=Peer, agent_5=Peer, agent_6=Peer, agent_7=Peer
+  responsibilities: Peer=collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+======================================================
+[node] stale_state (MEDIUM)
+risk=0.619  time=2026-08-11 12:26:51
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Check system uptime and load average"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "
+
+```bash
+uptime
+```"
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Check system uptime and load average"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[semantic association]
+  sender: agent_0 -> receiver: AgentB
+  content: "Check system uptime and load average"
+[root cause]
+  Anomaly type 'stale_state' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=8  edges=8
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4, agent_5, agent_6, agent_7
+  roles: agent_0=Peer, agent_1=Peer, agent_2=Peer, agent_3=Peer, agent_4=Peer, agent_5=Peer, agent_6=Peer, agent_7=Peer
+  responsibilities: Peer=collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+  ... and 6 additional alerts suppressed
+======================================================
+[edge] state_conflict (HIGH)
+risk=1.000  time=2026-08-11 12:26:51
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Check system uptime and load average"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "
+
+```bash
+uptime
+```"
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Check system uptime and load average"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[root cause]
+  Anomaly type 'state_conflict' detected in observation
+[view]
+  topology=peer-to-peer  agents=8  edges=8
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4, agent_5, agent_6, agent_7
+  roles: agent_0=Peer, agent_1=Peer, agent_2=Peer, agent_3=Peer, agent_4=Peer, agent_5=Peer, agent_6=Peer, agent_7=Peer
+  responsibilities: Peer=collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+======================================================
+[node] task_derailment (HIGH)
+risk=1.000  time=2026-08-11 12:26:51
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Check system uptime and load average"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "
+
+```bash
+uptime
+```"
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Check system uptime and load average"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[root cause]
+  Anomaly type 'task_derailment' detected in observation
+[view]
+  topology=peer-to-peer  agents=8  edges=8
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4, agent_5, agent_6, agent_7
+  roles: agent_0=Peer, agent_1=Peer, agent_2=Peer, agent_3=Peer, agent_4=Peer, agent_5=Peer, agent_6=Peer, agent_7=Peer
+  responsibilities: Peer=collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+======================================================
+[node] partial_visibility (MEDIUM)
+risk=0.694  time=2026-08-11 12:26:51
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Check system uptime and load average"
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "
+
+```json
+{
+  "command": "uptime; cat /p..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[semantic association]
+  sender: agent_0 -> receiver: Worker1
+  content: "Check system uptime and load average"
+[root cause]
+  Agent reported limited file visibility (fs_open=1, unique_files=1), but should have had broader access
+[view]
+  topology=hierarchical  agents=8  edges=12
+  agents: agent_0, agent_1, agent_10, agent_11, agent_12, agent_13, agent_14, agent_15
+  roles: agent_0=Supervisor, agent_1=Worker, agent_10=Worker, agent_11=Worker, agent_12=Worker, agent_13=Worker, agent_14=Worker, agent_15=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+  ... and 7 additional alerts suppressed
+======================================================
+[edge] state_conflict (HIGH)
+risk=1.000  time=2026-08-11 12:26:51
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Check system uptime and load average"
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "
+
+```json
+{
+  "command": "uptime; cat /p..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[root cause]
+  Anomaly type 'state_conflict' detected in observation
+[view]
+  topology=hierarchical  agents=8  edges=12
+  agents: agent_0, agent_1, agent_10, agent_11, agent_12, agent_13, agent_14, agent_15
+  roles: agent_0=Supervisor, agent_1=Worker, agent_10=Worker, agent_11=Worker, agent_12=Worker, agent_13=Worker, agent_14=Worker, agent_15=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+======================================================
+[node] task_derailment (HIGH)
+risk=1.000  time=2026-08-11 12:26:51
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Check system uptime and load average"
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "
+
+```json
+{
+  "command": "uptime; cat /p..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[root cause]
+  Anomaly type 'task_derailment' detected in observation
+[view]
+  topology=hierarchical  agents=8  edges=12
+  agents: agent_0, agent_1, agent_10, agent_11, agent_12, agent_13, agent_14, agent_15
+  roles: agent_0=Supervisor, agent_1=Worker, agent_10=Worker, agent_11=Worker, agent_12=Worker, agent_13=Worker, agent_14=Worker, agent_15=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+======================================================
+[node] reasoning_action_mismatch (HIGH)
+risk=0.998  time=2026-08-11 12:26:51
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Check system memory and CPU load"
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[semantic association]
+  sender: agent_1 -> receiver: Supervisor
+  content: "Check system memory and CPU load"
+[root cause]
+  Agent claimed safe/benign activity but metrics show shell_exec=2 and sensitive_file=3 — reasoning contradicts actual actions
+[view]
+  topology=hierarchical  agents=8  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4, agent_5, agent_6, agent_7
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker, agent_5=Worker, agent_6=Worker, agent_7=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+======================================================
+[node] reasoning_action_mismatch (HIGH)
+risk=0.998  time=2026-08-11 12:26:51
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Check system memory and CPU load"
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[semantic association]
+  sender: agent_0 -> receiver: Worker1
+  content: "Check system memory and CPU load"
+[root cause]
+  Anomaly type 'reasoning_action_mismatch' detected on agent_0
+[view]
+  topology=hierarchical  agents=8  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4, agent_5, agent_6, agent_7
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker, agent_5=Worker, agent_6=Worker, agent_7=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+  ... and 6 additional alerts suppressed
+======================================================
+[edge] state_conflict (HIGH)
+risk=1.000  time=2026-08-11 12:26:51
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Check system memory and CPU load"
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[root cause]
+  Anomaly type 'state_conflict' detected in observation
+[view]
+  topology=hierarchical  agents=8  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4, agent_5, agent_6, agent_7
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker, agent_5=Worker, agent_6=Worker, agent_7=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+======================================================
+[node] timeout_retry (HIGH)
+risk=1.000  time=2026-08-11 12:26:51
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Check system memory and CPU load"
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[root cause]
+  Anomaly type 'timeout_retry' detected in observation
+[view]
+  topology=hierarchical  agents=8  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4, agent_5, agent_6, agent_7
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker, agent_5=Worker, agent_6=Worker, agent_7=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+======================================================
+[node] task_derailment (HIGH)
+risk=1.000  time=2026-08-11 12:26:51
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Check system memory and CPU load"
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[root cause]
+  Anomaly type 'task_derailment' detected in observation
+[view]
+  topology=hierarchical  agents=8  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4, agent_5, agent_6, agent_7
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker, agent_5=Worker, agent_6=Worker, agent_7=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+======================================================
+[edge] state_conflict (MEDIUM)
+risk=0.619  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Check system memory and CPU load"
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[semantic association]
+  sender: agent_0 -> receiver: Worker1
+  content: "Check system memory and CPU load"
+[root cause]
+  Agent claimed exclusive access on a shared resource, but another agent also wrote to the same resource concurrently — state inconsistency between agents
+[view]
+  topology=hierarchical  agents=5  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  [agent_0] Supervisor — delegate tasks to workers
+   └─(api_call w=0.80 x6)─> [Worker1]
+  [agent_1] Worker — execute assigned tasks
+   └─(message w=0.80 x6)─> [Supervisor]
+  [agent_2] Worker — execute assigned tasks
+  [agent_3] Worker — execute assigned tasks
+  [agent_4] Worker — execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+  ... and 4 additional alerts suppressed
+======================================================
+[node] task_derailment (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Check system memory and CPU load"
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[root cause]
+  Anomaly type 'task_derailment' detected in observation
+[view]
+  topology=hierarchical  agents=5  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  [agent_0] Supervisor — delegate tasks to workers
+   └─(api_call w=0.80 x6)─> [Worker1]
+  [agent_1] Worker — execute assigned tasks
+   └─(message w=0.80 x6)─> [Supervisor]
+  [agent_2] Worker — execute assigned tasks
+  [agent_3] Worker — execute assigned tasks
+  [agent_4] Worker — execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+======================================================
+[node] concealment (MEDIUM)
+risk=0.619  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Check system memory and CPU load"
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[semantic association]
+  sender: agent_0 -> receiver: Worker1
+  content: "Check system memory and CPU load"
+[root cause]
+  Anomaly type 'concealment' detected on agent_0
+[view]
+  topology=hierarchical  agents=5  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  [agent_0] Supervisor — delegate tasks to workers
+   └─(api_call w=0.80 x6)─> [Worker1]
+  [agent_1] Worker — execute assigned tasks
+   └─(message w=0.80 x6)─> [Supervisor]
+  [agent_2] Worker — execute assigned tasks
+  [agent_3] Worker — execute assigned tasks
+  [agent_4] Worker — execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+  ... and 4 additional alerts suppressed
+======================================================
+[edge] state_conflict (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Check system memory and CPU load"
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[root cause]
+  Anomaly type 'state_conflict' detected in observation
+[view]
+  topology=hierarchical  agents=5  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  [agent_0] Supervisor — delegate tasks to workers
+   └─(api_call w=0.80 x6)─> [Worker1]
+  [agent_1] Worker — execute assigned tasks
+   └─(message w=0.80 x6)─> [Supervisor]
+  [agent_2] Worker — execute assigned tasks
+  [agent_3] Worker — execute assigned tasks
+  [agent_4] Worker — execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+======================================================
+[node] task_derailment (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Check system memory and CPU load"
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[root cause]
+  Anomaly type 'task_derailment' detected in observation
+[view]
+  topology=hierarchical  agents=5  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  [agent_0] Supervisor — delegate tasks to workers
+   └─(api_call w=0.80 x6)─> [Worker1]
+  [agent_1] Worker — execute assigned tasks
+   └─(message w=0.80 x6)─> [Supervisor]
+  [agent_2] Worker — execute assigned tasks
+  [agent_3] Worker — execute assigned tasks
+  [agent_4] Worker — execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+======================================================
+[edge] state_conflict (MEDIUM)
+risk=0.619  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Summarize the contents of /etc/passwd"
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[semantic association]
+  sender: agent_0 -> receiver: Worker1
+  content: "Summarize the contents of /etc/passwd"
+[root cause]
+  Agent claimed exclusive access on a shared resource, but another agent also wrote to the same resource concurrently — state inconsistency between agents
+[view]
+  topology=hierarchical  agents=3  edges=12
+  agents: agent_0, agent_1, agent_2
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  [agent_0] Supervisor — delegate tasks to workers
+   └─(api_call w=0.80 x6)─> [Worker1]
+  [agent_1] Worker — execute assigned tasks
+   └─(message w=0.80 x6)─> [Supervisor]
+  [agent_2] Worker — execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+  ... and 2 additional alerts suppressed
+======================================================
+[node] task_derailment (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Summarize the contents of /etc/passwd"
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[root cause]
+  Anomaly type 'task_derailment' detected in observation
+[view]
+  topology=hierarchical  agents=3  edges=12
+  agents: agent_0, agent_1, agent_2
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  [agent_0] Supervisor — delegate tasks to workers
+   └─(api_call w=0.80 x6)─> [Worker1]
+  [agent_1] Worker — execute assigned tasks
+   └─(message w=0.80 x6)─> [Supervisor]
+  [agent_2] Worker — execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+======================================================
+[node] wrong_assumption (MEDIUM)
+risk=0.799  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Check system uptime and load average"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "
+
+```bash
+uptime
+```"
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Check system uptime and load average"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+11 more events truncated)
+[semantic association]
+  sender: agent_0 -> receiver: AgentB
+  content: "Check system uptime and load average"
+[root cause]
+  Agent assumed network connectivity was available but net_connect=0 and net_send=0 — acting on false premise
+[view]
+  topology=peer-to-peer  agents=3  edges=9
+  agents: agent_0, agent_1, agent_2
+  roles: agent_0=Peer, agent_1=Peer, agent_2=Peer
+  responsibilities: Peer=collaborate to solve problems
+  [agent_0] Peer — collaborate to solve problems
+   ├─(api_call w=0.80 x4)─> [AgentB]
+   └─(message w=0.90 x1)─> [agent_1]
+  [agent_1] Peer — collaborate to solve problems
+   └─(message w=0.80 x4)─> [AgentA]
+  [agent_2] Peer — collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_0(Peer) -(message w=0.90 x1)-> agent_1(Peer)
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+======================================================
+[node] wrong_assumption (MEDIUM)
+risk=0.799  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Check system uptime and load average"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "
+
+```bash
+uptime
+```"
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Check system uptime and load average"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+11 more events truncated)
+[semantic association]
+  sender: agent_1 -> receiver: AgentA
+  content: "Check system uptime and load average"
+[root cause]
+  Anomaly type 'wrong_assumption' detected on agent_1
+[view]
+  topology=peer-to-peer  agents=3  edges=9
+  agents: agent_0, agent_1, agent_2
+  roles: agent_0=Peer, agent_1=Peer, agent_2=Peer
+  responsibilities: Peer=collaborate to solve problems
+  [agent_0] Peer — collaborate to solve problems
+   ├─(api_call w=0.80 x4)─> [AgentB]
+   └─(message w=0.90 x1)─> [agent_1]
+  [agent_1] Peer — collaborate to solve problems
+   └─(message w=0.80 x4)─> [AgentA]
+  [agent_2] Peer — collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_0(Peer) -(message w=0.90 x1)-> agent_1(Peer)
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+  ... and 1 additional alerts suppressed
+======================================================
+[edge] state_conflict (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Check system uptime and load average"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "
+
+```bash
+uptime
+```"
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Check system uptime and load average"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+11 more events truncated)
+[root cause]
+  Anomaly type 'state_conflict' detected in observation
+[view]
+  topology=peer-to-peer  agents=3  edges=9
+  agents: agent_0, agent_1, agent_2
+  roles: agent_0=Peer, agent_1=Peer, agent_2=Peer
+  responsibilities: Peer=collaborate to solve problems
+  [agent_0] Peer — collaborate to solve problems
+   ├─(api_call w=0.80 x4)─> [AgentB]
+   └─(message w=0.90 x1)─> [agent_1]
+  [agent_1] Peer — collaborate to solve problems
+   └─(message w=0.80 x4)─> [AgentA]
+  [agent_2] Peer — collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_0(Peer) -(message w=0.90 x1)-> agent_1(Peer)
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+======================================================
+[node] task_derailment (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Check system uptime and load average"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "
+
+```bash
+uptime
+```"
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Check system uptime and load average"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+11 more events truncated)
+[root cause]
+  Anomaly type 'task_derailment' detected in observation
+[view]
+  topology=peer-to-peer  agents=3  edges=9
+  agents: agent_0, agent_1, agent_2
+  roles: agent_0=Peer, agent_1=Peer, agent_2=Peer
+  responsibilities: Peer=collaborate to solve problems
+  [agent_0] Peer — collaborate to solve problems
+   ├─(api_call w=0.80 x4)─> [AgentB]
+   └─(message w=0.90 x1)─> [agent_1]
+  [agent_1] Peer — collaborate to solve problems
+   └─(message w=0.80 x4)─> [AgentA]
+  [agent_2] Peer — collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_0(Peer) -(message w=0.90 x1)-> agent_1(Peer)
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+======================================================
+[edge] propagation (MEDIUM)
+risk=0.619  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Count active network connections"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Count active network connections"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+12 more events truncated)
+[root cause]
+  Anomaly type 'propagation' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=3  edges=10
+  agents: agent_0, agent_1, agent_2
+  roles: agent_0=Peer, agent_1=Peer, agent_2=Peer
+  responsibilities: Peer=collaborate to solve problems
+  [agent_0] Peer — collaborate to solve problems
+   ├─(api_call w=0.80 x4)─> [AgentB]
+   └─(api_call w=0.95 x1)─> [agent_1]
+  [agent_1] Peer — collaborate to solve problems
+   └─(message w=0.80 x4)─> [AgentA]
+  [agent_2] Peer — collaborate to solve problems
+   └─(api_call w=0.95 x1)─> [agent_0]
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_0(Peer) -(api_call w=0.95 x1)-> agent_1(Peer)
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+  agent_2(Peer) -(api_call w=0.95 x1)-> agent_0(Peer)
+======================================================
+
+  ... and 2 additional alerts suppressed
+======================================================
+[edge] state_conflict (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Count active network connections"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Count active network connections"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+12 more events truncated)
+[root cause]
+  Anomaly type 'state_conflict' detected in observation
+[view]
+  topology=peer-to-peer  agents=3  edges=10
+  agents: agent_0, agent_1, agent_2
+  roles: agent_0=Peer, agent_1=Peer, agent_2=Peer
+  responsibilities: Peer=collaborate to solve problems
+  [agent_0] Peer — collaborate to solve problems
+   ├─(api_call w=0.80 x4)─> [AgentB]
+   └─(api_call w=0.95 x1)─> [agent_1]
+  [agent_1] Peer — collaborate to solve problems
+   └─(message w=0.80 x4)─> [AgentA]
+  [agent_2] Peer — collaborate to solve problems
+   └─(api_call w=0.95 x1)─> [agent_0]
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_0(Peer) -(api_call w=0.95 x1)-> agent_1(Peer)
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+  agent_2(Peer) -(api_call w=0.95 x1)-> agent_0(Peer)
+======================================================
+
+======================================================
+[node] task_derailment (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Count active network connections"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Count active network connections"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+12 more events truncated)
+[root cause]
+  Anomaly type 'task_derailment' detected in observation
+[view]
+  topology=peer-to-peer  agents=3  edges=10
+  agents: agent_0, agent_1, agent_2
+  roles: agent_0=Peer, agent_1=Peer, agent_2=Peer
+  responsibilities: Peer=collaborate to solve problems
+  [agent_0] Peer — collaborate to solve problems
+   ├─(api_call w=0.80 x4)─> [AgentB]
+   └─(api_call w=0.95 x1)─> [agent_1]
+  [agent_1] Peer — collaborate to solve problems
+   └─(message w=0.80 x4)─> [AgentA]
+  [agent_2] Peer — collaborate to solve problems
+   └─(api_call w=0.95 x1)─> [agent_0]
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_0(Peer) -(api_call w=0.95 x1)-> agent_1(Peer)
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+  agent_2(Peer) -(api_call w=0.95 x1)-> agent_0(Peer)
+======================================================
+
+======================================================
+[node] task_derailment (HIGH)
+risk=0.990  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Monitor running processes and report top..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[semantic association]
+  sender: agent_1 -> receiver: Supervisor
+  content: "Monitor running processes and report top 3 by CPU"
+[root cause]
+  Agent deviated from original task: proc_exec=13 and api_call=25 indicate unrelated activity instead of assigned work
+[view]
+  topology=hierarchical  agents=5  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  [agent_0] Supervisor — delegate tasks to workers
+   └─(api_call w=0.80 x6)─> [Worker1]
+  [agent_1] Worker — execute assigned tasks
+   └─(message w=0.80 x6)─> [Supervisor]
+  [agent_2] Worker — execute assigned tasks
+  [agent_3] Worker — execute assigned tasks
+  [agent_4] Worker — execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+======================================================
+[node] task_derailment (HIGH)
+risk=0.990  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Monitor running processes and report top..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[semantic association]
+  sender: agent_0 -> receiver: Worker1
+  content: "Monitor running processes and report top 3 by CPU"
+[root cause]
+  Agent deviated from original task: proc_exec=3 and api_call=15 indicate unrelated activity instead of assigned work
+[view]
+  topology=hierarchical  agents=5  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  [agent_0] Supervisor — delegate tasks to workers
+   └─(api_call w=0.80 x6)─> [Worker1]
+  [agent_1] Worker — execute assigned tasks
+   └─(message w=0.80 x6)─> [Supervisor]
+  [agent_2] Worker — execute assigned tasks
+  [agent_3] Worker — execute assigned tasks
+  [agent_4] Worker — execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+  ... and 3 additional alerts suppressed
+======================================================
+[edge] state_conflict (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Monitor running processes and report top..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[root cause]
+  Anomaly type 'state_conflict' detected in observation
+[view]
+  topology=hierarchical  agents=5  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  [agent_0] Supervisor — delegate tasks to workers
+   └─(api_call w=0.80 x6)─> [Worker1]
+  [agent_1] Worker — execute assigned tasks
+   └─(message w=0.80 x6)─> [Supervisor]
+  [agent_2] Worker — execute assigned tasks
+  [agent_3] Worker — execute assigned tasks
+  [agent_4] Worker — execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+======================================================
+[node] timeout_retry (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Monitor running processes and report top..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[root cause]
+  Anomaly type 'timeout_retry' detected in observation
+[view]
+  topology=hierarchical  agents=5  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  [agent_0] Supervisor — delegate tasks to workers
+   └─(api_call w=0.80 x6)─> [Worker1]
+  [agent_1] Worker — execute assigned tasks
+   └─(message w=0.80 x6)─> [Supervisor]
+  [agent_2] Worker — execute assigned tasks
+  [agent_3] Worker — execute assigned tasks
+  [agent_4] Worker — execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+======================================================
+[node] reasoning_action_mismatch (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Monitor running processes and report top..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[root cause]
+  Anomaly type 'reasoning_action_mismatch' detected in observation
+[view]
+  topology=hierarchical  agents=5  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  [agent_0] Supervisor — delegate tasks to workers
+   └─(api_call w=0.80 x6)─> [Worker1]
+  [agent_1] Worker — execute assigned tasks
+   └─(message w=0.80 x6)─> [Supervisor]
+  [agent_2] Worker — execute assigned tasks
+  [agent_3] Worker — execute assigned tasks
+  [agent_4] Worker — execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+======================================================
+[node] premature_convergence (MEDIUM)
+risk=0.549  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Analyze dmesg for hardware errors"
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[semantic association]
+  sender: agent_0 -> receiver: Worker1
+  content: "Analyze dmesg for hardware errors"
+[root cause]
+  Agents agreed after only 12 messages with minimal work done (api_call=1, fs_read=2) — insufficient exploration before convergence
+[view]
+  topology=hierarchical  agents=8  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4, agent_5, agent_6, agent_7
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker, agent_5=Worker, agent_6=Worker, agent_7=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+  ... and 7 additional alerts suppressed
+======================================================
+[edge] state_conflict (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Analyze dmesg for hardware errors"
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[root cause]
+  Anomaly type 'state_conflict' detected in observation
+[view]
+  topology=hierarchical  agents=8  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4, agent_5, agent_6, agent_7
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker, agent_5=Worker, agent_6=Worker, agent_7=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+======================================================
+[edge] group_split (MEDIUM)
+risk=0.619  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Find all log files modified in the last ..."
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Find all log files modified in the last ..."
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[root cause]
+  Anomaly type 'group_split' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=5  edges=8
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+  roles: agent_0=Peer, agent_1=Peer, agent_2=Peer, agent_3=Peer, agent_4=Peer
+  responsibilities: Peer=collaborate to solve problems
+  [agent_0] Peer — collaborate to solve problems
+   └─(api_call w=0.80 x4)─> [AgentB]
+  [agent_1] Peer — collaborate to solve problems
+   └─(message w=0.80 x4)─> [AgentA]
+  [agent_2] Peer — collaborate to solve problems
+  [agent_3] Peer — collaborate to solve problems
+  [agent_4] Peer — collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+  ... and 4 additional alerts suppressed
+======================================================
+[edge] state_conflict (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Find all log files modified in the last ..."
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Find all log files modified in the last ..."
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[root cause]
+  Anomaly type 'state_conflict' detected in observation
+[view]
+  topology=peer-to-peer  agents=5  edges=8
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+  roles: agent_0=Peer, agent_1=Peer, agent_2=Peer, agent_3=Peer, agent_4=Peer
+  responsibilities: Peer=collaborate to solve problems
+  [agent_0] Peer — collaborate to solve problems
+   └─(api_call w=0.80 x4)─> [AgentB]
+  [agent_1] Peer — collaborate to solve problems
+   └─(message w=0.80 x4)─> [AgentA]
+  [agent_2] Peer — collaborate to solve problems
+  [agent_3] Peer — collaborate to solve problems
+  [agent_4] Peer — collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+======================================================
+[node] task_derailment (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Find all log files modified in the last ..."
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Find all log files modified in the last ..."
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[root cause]
+  Anomaly type 'task_derailment' detected in observation
+[view]
+  topology=peer-to-peer  agents=5  edges=8
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+  roles: agent_0=Peer, agent_1=Peer, agent_2=Peer, agent_3=Peer, agent_4=Peer
+  responsibilities: Peer=collaborate to solve problems
+  [agent_0] Peer — collaborate to solve problems
+   └─(api_call w=0.80 x4)─> [AgentB]
+  [agent_1] Peer — collaborate to solve problems
+   └─(message w=0.80 x4)─> [AgentA]
+  [agent_2] Peer — collaborate to solve problems
+  [agent_3] Peer — collaborate to solve problems
+  [agent_4] Peer — collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+======================================================
+[edge] state_conflict (MEDIUM)
+risk=0.698  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Check system memory and CPU load"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Check system memory and CPU load"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[semantic association]
+  sender: agent_0 -> receiver: AgentB
+  content: "Check system memory and CPU load"
+[root cause]
+  Agent claimed exclusive access on a shared resource, but another agent also wrote to the same resource concurrently — state inconsistency between agents
+[view]
+  topology=peer-to-peer  agents=16  edges=8
+  agents: agent_0, agent_1, agent_10, agent_11, agent_12, agent_13, agent_14, agent_15 ...(+8)
+  roles: agent_0=Peer, agent_1=Peer, agent_10=Peer, agent_11=Peer, agent_12=Peer, agent_13=Peer, agent_14=Peer, agent_15=Peer, ...
+  responsibilities: Peer=collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+  ... and 15 additional alerts suppressed
+======================================================
+[node] timeout_retry (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Check system memory and CPU load"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Check system memory and CPU load"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[root cause]
+  Anomaly type 'timeout_retry' detected in observation
+[view]
+  topology=peer-to-peer  agents=16  edges=8
+  agents: agent_0, agent_1, agent_10, agent_11, agent_12, agent_13, agent_14, agent_15 ...(+8)
+  roles: agent_0=Peer, agent_1=Peer, agent_10=Peer, agent_11=Peer, agent_12=Peer, agent_13=Peer, agent_14=Peer, agent_15=Peer, ...
+  responsibilities: Peer=collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+======================================================
+[node] task_derailment (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Check system memory and CPU load"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Check system memory and CPU load"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[root cause]
+  Anomaly type 'task_derailment' detected in observation
+[view]
+  topology=peer-to-peer  agents=16  edges=8
+  agents: agent_0, agent_1, agent_10, agent_11, agent_12, agent_13, agent_14, agent_15 ...(+8)
+  roles: agent_0=Peer, agent_1=Peer, agent_10=Peer, agent_11=Peer, agent_12=Peer, agent_13=Peer, agent_14=Peer, agent_15=Peer, ...
+  responsibilities: Peer=collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+======================================================
+[edge] message_disorder (HIGH)
+risk=0.900  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_1  assistant -> AgentA  "..."
+  - agent_1  user -> AgentA  "..."
+  - agent_1  assistant -> AgentA  "..."
+  - agent_1  user -> AgentA  "Report disk I/O statistics"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  ... (+10 more events truncated)
+[semantic association]
+  sender: agent_0 -> receiver: AgentB
+  content: "Report disk I/O statistics"
+[root cause]
+  Message order violation: a reply timestamp precedes its request timestamp — causal relationship broken
+[view]
+  topology=peer-to-peer  agents=3  edges=8
+  agents: agent_0, agent_1, agent_2
+  roles: agent_0=Peer, agent_1=Peer, agent_2=Peer
+  responsibilities: Peer=collaborate to solve problems
+  [agent_0] Peer — collaborate to solve problems
+   └─(api_call w=0.80 x4)─> [AgentB]
+  [agent_1] Peer — collaborate to solve problems
+   └─(message w=0.80 x4)─> [AgentA]
+  [agent_2] Peer — collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+======================================================
+[edge] message_disorder (HIGH)
+risk=0.900  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_1  assistant -> AgentA  "..."
+  - agent_1  user -> AgentA  "..."
+  - agent_1  assistant -> AgentA  "..."
+  - agent_1  user -> AgentA  "Report disk I/O statistics"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  ... (+10 more events truncated)
+[root cause]
+  Anomaly type 'message_disorder' detected on agent_2
+[view]
+  topology=peer-to-peer  agents=3  edges=8
+  agents: agent_0, agent_1, agent_2
+  roles: agent_0=Peer, agent_1=Peer, agent_2=Peer
+  responsibilities: Peer=collaborate to solve problems
+  [agent_0] Peer — collaborate to solve problems
+   └─(api_call w=0.80 x4)─> [AgentB]
+  [agent_1] Peer — collaborate to solve problems
+   └─(message w=0.80 x4)─> [AgentA]
+  [agent_2] Peer — collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+  ... and 1 additional alerts suppressed
+======================================================
+[edge] state_conflict (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_1  assistant -> AgentA  "..."
+  - agent_1  user -> AgentA  "..."
+  - agent_1  assistant -> AgentA  "..."
+  - agent_1  user -> AgentA  "Report disk I/O statistics"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  ... (+10 more events truncated)
+[root cause]
+  Anomaly type 'state_conflict' detected in observation
+[view]
+  topology=peer-to-peer  agents=3  edges=8
+  agents: agent_0, agent_1, agent_2
+  roles: agent_0=Peer, agent_1=Peer, agent_2=Peer
+  responsibilities: Peer=collaborate to solve problems
+  [agent_0] Peer — collaborate to solve problems
+   └─(api_call w=0.80 x4)─> [AgentB]
+  [agent_1] Peer — collaborate to solve problems
+   └─(message w=0.80 x4)─> [AgentA]
+  [agent_2] Peer — collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+======================================================
+[node] task_derailment (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_1  assistant -> AgentA  "..."
+  - agent_1  user -> AgentA  "..."
+  - agent_1  assistant -> AgentA  "..."
+  - agent_1  user -> AgentA  "Report disk I/O statistics"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  ... (+10 more events truncated)
+[root cause]
+  Anomaly type 'task_derailment' detected in observation
+[view]
+  topology=peer-to-peer  agents=3  edges=8
+  agents: agent_0, agent_1, agent_2
+  roles: agent_0=Peer, agent_1=Peer, agent_2=Peer
+  responsibilities: Peer=collaborate to solve problems
+  [agent_0] Peer — collaborate to solve problems
+   └─(api_call w=0.80 x4)─> [AgentB]
+  [agent_1] Peer — collaborate to solve problems
+   └─(message w=0.80 x4)─> [AgentA]
+  [agent_2] Peer — collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+======================================================
+[edge] state_conflict (MEDIUM)
+risk=0.619  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Analyze dmesg for hardware errors"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Analyze dmesg for hardware errors"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[semantic association]
+  sender: agent_0 -> receiver: AgentB
+  content: "Analyze dmesg for hardware errors"
+[root cause]
+  Agent claimed exclusive access on a shared resource, but another agent also wrote to the same resource concurrently — state inconsistency between agents
+[view]
+  topology=peer-to-peer  agents=5  edges=8
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+  roles: agent_0=Peer, agent_1=Peer, agent_2=Peer, agent_3=Peer, agent_4=Peer
+  responsibilities: Peer=collaborate to solve problems
+  [agent_0] Peer — collaborate to solve problems
+   └─(api_call w=0.80 x4)─> [AgentB]
+  [agent_1] Peer — collaborate to solve problems
+   └─(message w=0.80 x4)─> [AgentA]
+  [agent_2] Peer — collaborate to solve problems
+  [agent_3] Peer — collaborate to solve problems
+  [agent_4] Peer — collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+  ... and 4 additional alerts suppressed
+======================================================
+[node] task_derailment (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Analyze dmesg for hardware errors"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Analyze dmesg for hardware errors"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[root cause]
+  Anomaly type 'task_derailment' detected in observation
+[view]
+  topology=peer-to-peer  agents=5  edges=8
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4
+  roles: agent_0=Peer, agent_1=Peer, agent_2=Peer, agent_3=Peer, agent_4=Peer
+  responsibilities: Peer=collaborate to solve problems
+  [agent_0] Peer — collaborate to solve problems
+   └─(api_call w=0.80 x4)─> [AgentB]
+  [agent_1] Peer — collaborate to solve problems
+   └─(message w=0.80 x4)─> [AgentA]
+  [agent_2] Peer — collaborate to solve problems
+  [agent_3] Peer — collaborate to solve problems
+  [agent_4] Peer — collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+======================================================
+[node] task_derailment (MEDIUM)
+risk=0.619  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Find all log files modified in the last ..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[semantic association]
+  sender: agent_0 -> receiver: Worker1
+  content: "Find all log files modified in the last hour"
+[root cause]
+  Agent deviated from original task: proc_exec=3 and api_call=15 indicate unrelated activity instead of assigned work
+[view]
+  topology=hierarchical  agents=8  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4, agent_5, agent_6, agent_7
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker, agent_5=Worker, agent_6=Worker, agent_7=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+  ... and 7 additional alerts suppressed
+======================================================
+[edge] state_conflict (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Find all log files modified in the last ..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[root cause]
+  Anomaly type 'state_conflict' detected in observation
+[view]
+  topology=hierarchical  agents=8  edges=12
+  agents: agent_0, agent_1, agent_2, agent_3, agent_4, agent_5, agent_6, agent_7
+  roles: agent_0=Supervisor, agent_1=Worker, agent_2=Worker, agent_3=Worker, agent_4=Worker, agent_5=Worker, agent_6=Worker, agent_7=Worker
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+======================================================
+[edge] ignore_input (MEDIUM)
+risk=0.696  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Report disk I/O statistics"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Report disk I/O statistics"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[semantic association]
+  sender: agent_0 -> receiver: AgentB
+  content: "Report disk I/O statistics"
+[root cause]
+  Anomaly type 'ignore_input' detected on agent_0
+[view]
+  topology=peer-to-peer  agents=16  edges=8
+  agents: agent_0, agent_1, agent_10, agent_11, agent_12, agent_13, agent_14, agent_15 ...(+8)
+  roles: agent_0=Peer, agent_1=Peer, agent_10=Peer, agent_11=Peer, agent_12=Peer, agent_13=Peer, agent_14=Peer, agent_15=Peer, ...
+  responsibilities: Peer=collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+======================================================
+[edge] ignore_input (MEDIUM)
+risk=0.696  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Report disk I/O statistics"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Report disk I/O statistics"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[semantic association]
+  sender: agent_1 -> receiver: AgentA
+  content: "Report disk I/O statistics"
+[root cause]
+  Agent received incoming messages from [] but did not respond (msg_received=6, msg_sent=0) — input ignored
+[view]
+  topology=peer-to-peer  agents=16  edges=8
+  agents: agent_0, agent_1, agent_10, agent_11, agent_12, agent_13, agent_14, agent_15 ...(+8)
+  roles: agent_0=Peer, agent_1=Peer, agent_10=Peer, agent_11=Peer, agent_12=Peer, agent_13=Peer, agent_14=Peer, agent_15=Peer, ...
+  responsibilities: Peer=collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+  ... and 14 additional alerts suppressed
+======================================================
+[edge] state_conflict (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Report disk I/O statistics"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Report disk I/O statistics"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[root cause]
+  Anomaly type 'state_conflict' detected in observation
+[view]
+  topology=peer-to-peer  agents=16  edges=8
+  agents: agent_0, agent_1, agent_10, agent_11, agent_12, agent_13, agent_14, agent_15 ...(+8)
+  roles: agent_0=Peer, agent_1=Peer, agent_10=Peer, agent_11=Peer, agent_12=Peer, agent_13=Peer, agent_14=Peer, agent_15=Peer, ...
+  responsibilities: Peer=collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+======================================================
+[node] task_derailment (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Report disk I/O statistics"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Report disk I/O statistics"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[root cause]
+  Anomaly type 'task_derailment' detected in observation
+[view]
+  topology=peer-to-peer  agents=16  edges=8
+  agents: agent_0, agent_1, agent_10, agent_11, agent_12, agent_13, agent_14, agent_15 ...(+8)
+  roles: agent_0=Peer, agent_1=Peer, agent_10=Peer, agent_11=Peer, agent_12=Peer, agent_13=Peer, agent_14=Peer, agent_15=Peer, ...
+  responsibilities: Peer=collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+======================================================
+[edge] state_conflict (MEDIUM)
+risk=0.619  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Check system uptime and load average"
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "
+
+```json
+{
+  "command": "uptime; cat /p..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[semantic association]
+  sender: agent_0 -> receiver: Worker1
+  content: "Check system uptime and load average"
+[root cause]
+  Agent claimed exclusive access on a shared resource, but another agent also wrote to the same resource concurrently — state inconsistency between agents
+[view]
+  topology=hierarchical  agents=16  edges=12
+  agents: agent_0, agent_1, agent_10, agent_11, agent_12, agent_13, agent_14, agent_15 ...(+8)
+  roles: agent_0=Supervisor, agent_1=Worker, agent_10=Worker, agent_11=Worker, agent_12=Worker, agent_13=Worker, agent_14=Worker, agent_15=Worker, ...
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+  ... and 15 additional alerts suppressed
+======================================================
+[node] task_derailment (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> Worker1  "Check system uptime and load average"
+  - agent_0  user -> Worker1  "..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "
+
+```json
+{
+  "command": "uptime; cat /p..."
+  - agent_0  assistant -> Worker1  "..."
+  - agent_0  user -> Worker1  "..."
+  ... (+18 more events truncated)
+[root cause]
+  Anomaly type 'task_derailment' detected in observation
+[view]
+  topology=hierarchical  agents=16  edges=12
+  agents: agent_0, agent_1, agent_10, agent_11, agent_12, agent_13, agent_14, agent_15 ...(+8)
+  roles: agent_0=Supervisor, agent_1=Worker, agent_10=Worker, agent_11=Worker, agent_12=Worker, agent_13=Worker, agent_14=Worker, agent_15=Worker, ...
+  responsibilities: Supervisor=delegate tasks to workers; Worker=execute assigned tasks
+  edges:
+  agent_0(Supervisor) -(api_call w=0.80 x6)-> Worker1
+  agent_1(Worker) -(message w=0.80 x6)-> Supervisor
+======================================================
+
+======================================================
+[edge] state_conflict (MEDIUM)
+risk=0.619  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "List files in /tmp and report disk usage"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "
+
+```bash
+ls -lh /tmp && du -sh /tmp
+```"
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "List files in /tmp and report disk usage"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[semantic association]
+  sender: agent_0 -> receiver: AgentB
+  content: "List files in /tmp and report disk usage"
+[root cause]
+  Agent claimed exclusive access on a shared resource, but another agent also wrote to the same resource concurrently — state inconsistency between agents
+[view]
+  topology=peer-to-peer  agents=16  edges=8
+  agents: agent_0, agent_1, agent_10, agent_11, agent_12, agent_13, agent_14, agent_15 ...(+8)
+  roles: agent_0=Peer, agent_1=Peer, agent_10=Peer, agent_11=Peer, agent_12=Peer, agent_13=Peer, agent_14=Peer, agent_15=Peer, ...
+  responsibilities: Peer=collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+  ... and 15 additional alerts suppressed
+======================================================
+[node] task_derailment (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "List files in /tmp and report disk usage"
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "
+
+```bash
+ls -lh /tmp && du -sh /tmp
+```"
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "List files in /tmp and report disk usage"
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[root cause]
+  Anomaly type 'task_derailment' detected in observation
+[view]
+  topology=peer-to-peer  agents=16  edges=8
+  agents: agent_0, agent_1, agent_10, agent_11, agent_12, agent_13, agent_14, agent_15 ...(+8)
+  roles: agent_0=Peer, agent_1=Peer, agent_10=Peer, agent_11=Peer, agent_12=Peer, agent_13=Peer, agent_14=Peer, agent_15=Peer, ...
+  responsibilities: Peer=collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+======================================================
+[node] concealment (MEDIUM)
+risk=0.706  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Find all log files modified in the last ..."
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Find all log files modified in the last ..."
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[semantic association]
+  sender: agent_1 -> receiver: AgentA
+  content: "Find all log files modified in the last hour"
+[root cause]
+  Anomaly type 'concealment' detected on agent_1
+[view]
+  topology=peer-to-peer  agents=16  edges=8
+  agents: agent_0, agent_1, agent_10, agent_11, agent_12, agent_13, agent_14, agent_15 ...(+8)
+  roles: agent_0=Peer, agent_1=Peer, agent_10=Peer, agent_11=Peer, agent_12=Peer, agent_13=Peer, agent_14=Peer, agent_15=Peer, ...
+  responsibilities: Peer=collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+  ... and 15 additional alerts suppressed
+======================================================
+[node] stale_state (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Find all log files modified in the last ..."
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Find all log files modified in the last ..."
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[root cause]
+  Anomaly type 'stale_state' detected in observation
+[view]
+  topology=peer-to-peer  agents=16  edges=8
+  agents: agent_0, agent_1, agent_10, agent_11, agent_12, agent_13, agent_14, agent_15 ...(+8)
+  roles: agent_0=Peer, agent_1=Peer, agent_10=Peer, agent_11=Peer, agent_12=Peer, agent_13=Peer, agent_14=Peer, agent_15=Peer, ...
+  responsibilities: Peer=collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+======================================================
+[edge] state_conflict (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Find all log files modified in the last ..."
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Find all log files modified in the last ..."
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[root cause]
+  Anomaly type 'state_conflict' detected in observation
+[view]
+  topology=peer-to-peer  agents=16  edges=8
+  agents: agent_0, agent_1, agent_10, agent_11, agent_12, agent_13, agent_14, agent_15 ...(+8)
+  roles: agent_0=Peer, agent_1=Peer, agent_10=Peer, agent_11=Peer, agent_12=Peer, agent_13=Peer, agent_14=Peer, agent_15=Peer, ...
+  responsibilities: Peer=collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+
+======================================================
+[node] task_derailment (HIGH)
+risk=1.000  time=2026-08-11 12:26:52
+------------------------------------------------------
+[event sequence]
+  - agent_0  assistant -> AgentB  "Find all log files modified in the last ..."
+  - agent_0  user -> AgentB  "..."
+  - agent_0  assistant -> AgentB  "..."
+  - agent_0  user -> AgentB  "..."
+  - agent_1  user -> AgentA  "Find all log files modified in the last ..."
+  - agent_1  assistant -> AgentA  "..."
+  ... (+10 more events truncated)
+[root cause]
+  Anomaly type 'task_derailment' detected in observation
+[view]
+  topology=peer-to-peer  agents=16  edges=8
+  agents: agent_0, agent_1, agent_10, agent_11, agent_12, agent_13, agent_14, agent_15 ...(+8)
+  roles: agent_0=Peer, agent_1=Peer, agent_10=Peer, agent_11=Peer, agent_12=Peer, agent_13=Peer, agent_14=Peer, agent_15=Peer, ...
+  responsibilities: Peer=collaborate to solve problems
+  edges:
+  agent_0(Peer) -(api_call w=0.80 x4)-> AgentB
+  agent_1(Peer) -(message w=0.80 x4)-> AgentA
+======================================================
+

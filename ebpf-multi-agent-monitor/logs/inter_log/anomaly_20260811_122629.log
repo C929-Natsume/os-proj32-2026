@@ -1,0 +1,364 @@
+======================================================
+[unknown] unknown (MEDIUM)
+risk=0.526  time=2026-08-11 12:26:29
+------------------------------------------------------
+[event sequence]
+  - agent_0  request -> agent_1  "..."
+  - agent_0  message -> agent_1
+[root cause]
+  Anomaly type 'unknown' detected on agent_0
+[view]
+  topology=unknown  agents=2  edges=1
+  agents: agent_0, agent_1
+  roles: agent_0=unknown, agent_1=unknown
+  [agent_0] unknown
+   └─(message w=0.30 x1)─> [agent_1]
+  [agent_1] unknown
+  edges:
+  agent_0(unknown) -(message w=0.30 x1)-> agent_1(unknown)
+======================================================
+
+  ... and 1 additional alerts suppressed
+======================================================
+[node] stale_state (HIGH)
+risk=0.990  time=2026-08-11 12:26:29
+------------------------------------------------------
+[event sequence]
+  - agent_0  api_call -> agent_1
+[root cause]
+  fs_unlink=5 file deletions — may indicate operating on outdated file state
+[view]
+  topology=unknown  agents=2  edges=1
+  agents: agent_0, agent_1
+  roles: agent_0=unknown, agent_1=unknown
+  [agent_0] unknown
+   └─(api_call w=0.90 x1)─> [agent_1]
+  [agent_1] unknown
+  edges:
+  agent_0(unknown) -(api_call w=0.90 x1)-> agent_1(unknown)
+======================================================
+
+======================================================
+[node] stale_state (HIGH)
+risk=0.990  time=2026-08-11 12:26:29
+------------------------------------------------------
+[event sequence]
+  - agent_0  api_call -> agent_1
+[root cause]
+  Anomaly type 'stale_state' detected on agent_1
+[view]
+  topology=unknown  agents=2  edges=1
+  agents: agent_0, agent_1
+  roles: agent_0=unknown, agent_1=unknown
+  [agent_0] unknown
+   └─(api_call w=0.90 x1)─> [agent_1]
+  [agent_1] unknown
+  edges:
+  agent_0(unknown) -(api_call w=0.90 x1)-> agent_1(unknown)
+======================================================
+
+======================================================
+[node] timeout_retry (HIGH)
+risk=1.000  time=2026-08-11 12:26:29
+------------------------------------------------------
+[event sequence]
+  - agent_0  api_call -> agent_1
+[root cause]
+  Anomaly type 'timeout_retry' detected in observation
+[view]
+  topology=unknown  agents=2  edges=1
+  agents: agent_0, agent_1
+  roles: agent_0=unknown, agent_1=unknown
+  [agent_0] unknown
+   └─(api_call w=0.90 x1)─> [agent_1]
+  [agent_1] unknown
+  edges:
+  agent_0(unknown) -(api_call w=0.90 x1)-> agent_1(unknown)
+======================================================
+
+======================================================
+[edge] ignore_input (HIGH)
+risk=1.000  time=2026-08-11 12:26:29
+------------------------------------------------------
+[event sequence]
+  - agent_0  api_call -> agent_1
+[root cause]
+  Anomaly type 'ignore_input' detected in observation
+[view]
+  topology=unknown  agents=2  edges=1
+  agents: agent_0, agent_1
+  roles: agent_0=unknown, agent_1=unknown
+  [agent_0] unknown
+   └─(api_call w=0.90 x1)─> [agent_1]
+  [agent_1] unknown
+  edges:
+  agent_0(unknown) -(api_call w=0.90 x1)-> agent_1(unknown)
+======================================================
+
+======================================================
+[node] task_derailment (HIGH)
+risk=1.000  time=2026-08-11 12:26:29
+------------------------------------------------------
+[event sequence]
+  - agent_0  api_call -> agent_1
+[root cause]
+  Anomaly type 'task_derailment' detected in observation
+[view]
+  topology=unknown  agents=2  edges=1
+  agents: agent_0, agent_1
+  roles: agent_0=unknown, agent_1=unknown
+  [agent_0] unknown
+   └─(api_call w=0.90 x1)─> [agent_1]
+  [agent_1] unknown
+  edges:
+  agent_0(unknown) -(api_call w=0.90 x1)-> agent_1(unknown)
+======================================================
+
+======================================================
+[node] stale_state (HIGH)
+risk=0.948  time=2026-08-11 12:26:29
+------------------------------------------------------
+[event sequence]
+  - agent_0  api_call -> agent_1
+[root cause]
+  fs_unlink=2 file deletions — may indicate operating on outdated file state
+[view]
+  topology=unknown  agents=2  edges=1
+  agents: agent_0, agent_1
+  roles: agent_0=unknown, agent_1=unknown
+  [agent_0] unknown
+   └─(api_call w=0.60 x1)─> [agent_1]
+  [agent_1] unknown
+  edges:
+  agent_0(unknown) -(api_call w=0.60 x1)-> agent_1(unknown)
+======================================================
+
+======================================================
+[node] stale_state (HIGH)
+risk=0.948  time=2026-08-11 12:26:29
+------------------------------------------------------
+[event sequence]
+  - agent_0  api_call -> agent_1
+[root cause]
+  Anomaly type 'stale_state' detected on agent_1
+[view]
+  topology=unknown  agents=2  edges=1
+  agents: agent_0, agent_1
+  roles: agent_0=unknown, agent_1=unknown
+  [agent_0] unknown
+   └─(api_call w=0.60 x1)─> [agent_1]
+  [agent_1] unknown
+  edges:
+  agent_0(unknown) -(api_call w=0.60 x1)-> agent_1(unknown)
+======================================================
+
+======================================================
+[node] timeout_retry (HIGH)
+risk=1.000  time=2026-08-11 12:26:29
+------------------------------------------------------
+[event sequence]
+  - agent_0  api_call -> agent_1
+[root cause]
+  Anomaly type 'timeout_retry' detected in observation
+[view]
+  topology=unknown  agents=2  edges=1
+  agents: agent_0, agent_1
+  roles: agent_0=unknown, agent_1=unknown
+  [agent_0] unknown
+   └─(api_call w=0.60 x1)─> [agent_1]
+  [agent_1] unknown
+  edges:
+  agent_0(unknown) -(api_call w=0.60 x1)-> agent_1(unknown)
+======================================================
+
+======================================================
+[edge] ignore_input (HIGH)
+risk=1.000  time=2026-08-11 12:26:29
+------------------------------------------------------
+[event sequence]
+  - agent_0  api_call -> agent_1
+[root cause]
+  Anomaly type 'ignore_input' detected in observation
+[view]
+  topology=unknown  agents=2  edges=1
+  agents: agent_0, agent_1
+  roles: agent_0=unknown, agent_1=unknown
+  [agent_0] unknown
+   └─(api_call w=0.60 x1)─> [agent_1]
+  [agent_1] unknown
+  edges:
+  agent_0(unknown) -(api_call w=0.60 x1)-> agent_1(unknown)
+======================================================
+
+======================================================
+[node] reasoning_action_mismatch (HIGH)
+risk=1.000  time=2026-08-11 12:26:29
+------------------------------------------------------
+[event sequence]
+  - agent_0  api_call -> agent_1
+[root cause]
+  Anomaly type 'reasoning_action_mismatch' detected in observation
+[view]
+  topology=unknown  agents=2  edges=1
+  agents: agent_0, agent_1
+  roles: agent_0=unknown, agent_1=unknown
+  [agent_0] unknown
+   └─(api_call w=0.60 x1)─> [agent_1]
+  [agent_1] unknown
+  edges:
+  agent_0(unknown) -(api_call w=0.60 x1)-> agent_1(unknown)
+======================================================
+
+======================================================
+[node] task_derailment (HIGH)
+risk=1.000  time=2026-08-11 12:26:29
+------------------------------------------------------
+[event sequence]
+  - agent_0  api_call -> agent_1
+[root cause]
+  Anomaly type 'task_derailment' detected in observation
+[view]
+  topology=unknown  agents=2  edges=1
+  agents: agent_0, agent_1
+  roles: agent_0=unknown, agent_1=unknown
+  [agent_0] unknown
+   └─(api_call w=0.60 x1)─> [agent_1]
+  [agent_1] unknown
+  edges:
+  agent_0(unknown) -(api_call w=0.60 x1)-> agent_1(unknown)
+======================================================
+
+======================================================
+[unknown] unknown (MEDIUM)
+risk=0.526  time=2026-08-11 12:26:29
+------------------------------------------------------
+[event sequence]
+  - agent_0  request -> agent_1  "..."
+  - agent_0  message -> agent_1
+[root cause]
+  Anomaly type 'unknown' detected on agent_0
+[view]
+  topology=unknown  agents=2  edges=1
+  agents: agent_0, agent_1
+  roles: agent_0=unknown, agent_1=unknown
+  [agent_0] unknown
+   └─(message w=0.30 x1)─> [agent_1]
+  [agent_1] unknown
+  edges:
+  agent_0(unknown) -(message w=0.30 x1)-> agent_1(unknown)
+======================================================
+
+  ... and 1 additional alerts suppressed
+======================================================
+[unknown] unknown (MEDIUM)
+risk=0.526  time=2026-08-11 12:26:29
+------------------------------------------------------
+[event sequence]
+  - agent_0  request -> agent_1  "..."
+  - agent_0  message -> agent_1
+[root cause]
+  Anomaly type 'unknown' detected on agent_0
+[view]
+  topology=unknown  agents=2  edges=1
+  agents: agent_0, agent_1
+  roles: agent_0=unknown, agent_1=unknown
+  [agent_0] unknown
+   └─(message w=0.30 x1)─> [agent_1]
+  [agent_1] unknown
+  edges:
+  agent_0(unknown) -(message w=0.30 x1)-> agent_1(unknown)
+======================================================
+
+  ... and 1 additional alerts suppressed
+======================================================
+[unknown] unknown (MEDIUM)
+risk=0.526  time=2026-08-11 12:26:29
+------------------------------------------------------
+[event sequence]
+  - agent_0  request -> agent_1  "..."
+  - agent_0  message -> agent_1
+[root cause]
+  Anomaly type 'unknown' detected on agent_0
+[view]
+  topology=unknown  agents=2  edges=1
+  agents: agent_0, agent_1
+  roles: agent_0=unknown, agent_1=unknown
+  [agent_0] unknown
+   └─(message w=0.30 x1)─> [agent_1]
+  [agent_1] unknown
+  edges:
+  agent_0(unknown) -(message w=0.30 x1)-> agent_1(unknown)
+======================================================
+
+  ... and 1 additional alerts suppressed
+======================================================
+[unknown] unknown (MEDIUM)
+risk=0.526  time=2026-08-11 12:26:29
+------------------------------------------------------
+[event sequence]
+  - agent_0  request -> agent_1  "..."
+  - agent_0  message -> agent_1
+[root cause]
+  Anomaly type 'unknown' detected on agent_0
+[view]
+  topology=unknown  agents=2  edges=1
+  agents: agent_0, agent_1
+  roles: agent_0=unknown, agent_1=unknown
+  [agent_0] unknown
+   └─(message w=0.30 x1)─> [agent_1]
+  [agent_1] unknown
+  edges:
+  agent_0(unknown) -(message w=0.30 x1)-> agent_1(unknown)
+======================================================
+
+  ... and 1 additional alerts suppressed
+======================================================
+[unknown] unknown (MEDIUM)
+risk=0.526  time=2026-08-11 12:26:29
+------------------------------------------------------
+[event sequence]
+  - agent_0  request -> agent_1  "..."
+  - agent_0  message -> agent_1
+[root cause]
+  Anomaly type 'unknown' detected on agent_0
+[view]
+  topology=unknown  agents=2  edges=1
+  agents: agent_0, agent_1
+  roles: agent_0=unknown, agent_1=unknown
+  [agent_0] unknown
+   └─(message w=0.30 x1)─> [agent_1]
+  [agent_1] unknown
+  edges:
+  agent_0(unknown) -(message w=0.30 x1)-> agent_1(unknown)
+======================================================
+
+  ... and 1 additional alerts suppressed
+[NORMAL] pass  time=2026-08-11 12:26:29  agents=2  risk=0.274
+======================================================
+[unknown] unknown (MEDIUM)
+risk=0.526  time=2026-08-11 12:26:29
+------------------------------------------------------
+[event sequence]
+  - agent_0  request -> agent_1  "..."
+  - agent_0  message -> agent_1
+[root cause]
+  Anomaly type 'unknown' detected on agent_0
+[view]
+  topology=unknown  agents=2  edges=1
+  agents: agent_0, agent_1
+  roles: agent_0=unknown, agent_1=unknown
+  [agent_0] unknown
+   └─(message w=0.30 x1)─> [agent_1]
+  [agent_1] unknown
+  edges:
+  agent_0(unknown) -(message w=0.30 x1)-> agent_1(unknown)
+======================================================
+
+  ... and 1 additional alerts suppressed
+[NORMAL] pass  time=2026-08-11 12:26:29  agents=2  risk=0.200
+[NORMAL] pass  time=2026-08-11 12:26:29  agents=2  risk=0.200
+[NORMAL] pass  time=2026-08-11 12:26:29  agents=2  risk=0.000
+[NORMAL] pass  time=2026-08-11 12:26:29  agents=2  risk=0.000
+[NORMAL] pass  time=2026-08-11 12:26:29  agents=2  risk=0.000
+[NORMAL] pass  time=2026-08-11 12:26:29  agents=2  risk=0.030
+[NORMAL] pass  time=2026-08-11 12:26:29  agents=2  risk=0.200

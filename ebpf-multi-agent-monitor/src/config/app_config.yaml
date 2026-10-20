@@ -1,0 +1,46 @@
+redis:
+  host: 127.0.0.1
+  port: 6379
+  channel: ebpf_events
+  db: 0
+
+llm:
+  enabled: true
+  api_key: ""
+  api_key_env: DEEPSEEK_API_KEY
+  model: deepseek-chat
+  endpoint: https://api.deepseek.com/chat/completions
+  judge_cmd: ""
+  timeout_sec: 15
+  max_input_chars: 1500
+  max_output_tokens: 256
+  templates: {}
+
+monitor:
+  workspace_root: /mnt/e/os2026
+  target_processes:
+    - python
+    - bash
+    - node
+    - java
+
+  target_paths:
+    - /usr/bin
+    - /bin
+    - /sbin
+    - /usr/local/bin
+
+  bpf:
+    ringbuf_size: 262144
+    max_events: 10000
+
+logging:
+  level: info
+  ebpf_log_dir: ../../logs/ebpf_log
+  llm_log_dir: ../../logs/llm_log
+  alert_log_dir: ../../logs/alerts
+
+storage:
+  sqlite:
+    enabled: true
+    path: ../../logs/alerts/analysis.db
