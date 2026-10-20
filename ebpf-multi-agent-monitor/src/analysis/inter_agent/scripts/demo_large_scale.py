@@ -45,6 +45,9 @@ def _read_observation(data_list, idx, live=False):
     # Cycled from stored data
     obs = copy.deepcopy(data_list[idx % len(data_list)])
     obs["label"] = 0
+    # Stale per-agent anomalies from a prior intra-agent run contradict the
+    # forced label=0 and must not drive inter-agent detections here.
+    obs.pop("anomalies", None)
     # Apply SAFE_METRICS for clean rule/GNN baseline
     for aid in obs.get("agents", {}):
         ad = obs["agents"][aid]

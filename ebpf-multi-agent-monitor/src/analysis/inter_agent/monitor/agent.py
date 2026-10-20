@@ -10,12 +10,13 @@ from typing import Dict, List, Optional, Tuple
 
 from inter_agent.config import load_config
 from inter_agent.graph.builder import AgentInteractionGraph
-from inter_agent.detection.gnn_detector import AnomalyDetector, RuleBasedDetector, extract_features
+from inter_agent.detection.gnn_detector import AnomalyDetector, RuleBasedDetector
 from inter_agent.detection.temporal_detector import TemporalAnomalyDetector
 from inter_agent.detection.message_detector import MessageAnomalyDetector
 from inter_agent.detection.propagation_analyzer import PropagationPathAnalyzer
 from inter_agent.detection.semantic_rule_checker import SemanticRuleChecker
 from inter_agent.data.features import NODE_FEATURE_DIM
+from inter_agent.data.fingerprint_bank import CommunicationFingerprintBank
 from inter_agent.intervention.topology import TopologyIntervention
 
 
@@ -84,6 +85,7 @@ class AnomalyReport:
     llm_verdict: Optional[dict] = None
     escalation_context: dict = field(default_factory=dict)
     semantic_result: dict = field(default_factory=dict)
+    fingerprint_result: dict = field(default_factory=dict)
 
 
 class MonitorAgent:
@@ -102,6 +104,7 @@ class MonitorAgent:
         cfg = config or {}
         detect_cfg = cfg.get("detection", {})
         self._detect_cfg = detect_cfg
+        self._BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
         self._interaction_graph = AgentInteractionGraph(
             max_agents=cfg.get("agents", {}).get("max_agents", 16)
@@ -113,7 +116,8 @@ class MonitorAgent:
             hidden_dim=model_cfg.get("hidden_dim", 64),
             latent_dim=model_cfg.get("latent_dim", 64),
             feature_weight=model_cfg.get("feature_weight", 0.3),
-            model_path=model_path or model_cfg.get("model_path"),
+            model_path=self._resolve_path(model_path or model_cfg.get("model_path")),
+            sparse_struct=model_cfg.get("sparse_struct", False),
         )
         self._temporal_detector = TemporalAnomalyDetector(
             window_size=detect_cfg.get("temporal_window", 10),
@@ -121,7 +125,7 @@ class MonitorAgent:
         )
         self._message_detector = MessageAnomalyDetector(
             freq_std_threshold=detect_cfg.get("message_freq_std_threshold", 2.5),
-            cascade_threshold=detect_cfg.get("cascade_agent_threshold", 5),
+            cascade_threshold=detect_cfg.get("cascade_agent_threshold", 8),
             data_size_mb=detect_cfg.get("data_size_mb_threshold", 100.0),
         )
         self._propagation_analyzer = PropagationPathAnalyzer(
@@ -133,15 +137,47 @@ class MonitorAgent:
         )
 
         self._semantic_threshold = detect_cfg.get("semantic_rule_threshold", 0.5)
+        self._anomaly_threshold = detect_cfg.get("anomaly_threshold", 0.3)
+        semantic_cfg = detect_cfg.get("semantic", {})
+        posterior_path = semantic_cfg.get("posterior_path")
+        posterior_path = self._resolve_path(posterior_path)
         self._semantic_rule_checker = SemanticRuleChecker(
-            risk_threshold=self._semantic_threshold)
+            risk_threshold=self._semantic_threshold,
+            adaptive=bool(semantic_cfg.get("adaptive", False)),
+            adaptive_cfg=semantic_cfg,
+            posterior_path=posterior_path)
         self._semantic_rule_weight = detect_cfg.get("semantic_rule_weight", 0.15)
+
+        fp_cfg = detect_cfg.get("fingerprint", {})
+        bank_path = fp_cfg.get("bank_path")
+        bank_path = self._resolve_path(bank_path)
+        self._fingerprint_bank = CommunicationFingerprintBank(
+            enabled=bool(fp_cfg.get("enabled", False)),
+            forget_alpha=fp_cfg.get("forget_alpha", 0.1),
+            z_threshold=fp_cfg.get("z_threshold", 3.0),
+            min_samples=fp_cfg.get("min_samples", 5),
+            unknown_penalty=fp_cfg.get("unknown_penalty", 1.0),
+            magnitude_scale=fp_cfg.get("magnitude_scale", 2.0),
+            save_path=bank_path,
+        )
+        self._fingerprint_weight = fp_cfg.get("weight", 0.1)
+        self._fingerprint_learn_online = bool(fp_cfg.get("learn_online", True))
+        if self._fingerprint_bank.enabled:
+            self._fingerprint_bank.load()
 
         self._history: deque = deque(maxlen=HISTORY_MAXLEN)
         self._last_report: Optional[AnomalyReport] = None
-        self._log_dir = cfg.get("log", {}).get("output_dir", None)
+        self._log_dir = self._resolve_path(
+            cfg.get("log", {}).get("output_dir", None))
         self._session_log_file = None
         self._logged_supplemental_types: set = set()
+
+    @staticmethod
+    def _resolve_path(path: Optional[str]) -> Optional[str]:
+        if path and not os.path.isabs(path):
+            base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            return os.path.join(base, path)
+        return path
 
     def process_observation(self, obs: dict) -> AnomalyReport:
         ts = obs.get("timestamp", 0)
@@ -166,6 +202,19 @@ class MonitorAgent:
             semantic_rule_result,
         )
 
+        p_anomaly = max(combined_scores.values()) if combined_scores else 0.0
+        self._semantic_rule_checker.update(obs, p_anomaly=p_anomaly)
+
+        fingerprint_result = {}
+        if self._fingerprint_bank.enabled:
+            interactions = obs.get("interactions", [])
+            fingerprint_result = self._fingerprint_bank.score(interactions)
+            if (self._fingerprint_learn_online
+                    and max(combined_scores.values(), default=0.0)
+                    < self._anomaly_threshold):
+                self._fingerprint_bank.learn(interactions)
+                self._fingerprint_bank.save()
+
         anomalous_nodes, anomalous_edges = self._identify_anomalies(
             combined_scores, gnn_result, temporal_result, agent_ids
         )
@@ -182,6 +231,8 @@ class MonitorAgent:
         )
 
         max_risk = max(combined_scores.values()) if combined_scores else 0.0
+        if fingerprint_result and fingerprint_result.get("risk", 0.0) > 0.0:
+            max_risk = max(max_risk, self._fingerprint_weight * fingerprint_result["risk"])
         response = self._decide_response(
             max_risk, combined_scores, anomalous_nodes,
             propagation_result, agent_ids
@@ -243,6 +294,7 @@ class MonitorAgent:
             llm_verdict=llm_verdict,
             escalation_context=escalation_context,
             semantic_result=semantic_result,
+            fingerprint_result=fingerprint_result,
         )
 
         self._history.append(obs)
@@ -269,13 +321,14 @@ class MonitorAgent:
         return report
 
     def _detect_gnn(self, obs: dict, agents_data: dict, agent_ids: list) -> dict:
-        pyg_data = self._interaction_graph.to_pyg_data()
+        interactions = obs.get("interactions", [])
+        pyg_data = self._interaction_graph.to_pyg_data(agents_data, interactions)
         if pyg_data is None or not agent_ids:
             return {"anomaly_scores": [], "anomaly_nodes": [], "recon_error": 0.0,
                     "cls_probability": [], "graph_score": 0.0}
-        _, edge_index, _ = pyg_data
-        x_np = extract_features(agents_data, agent_ids, obs.get("interactions", []))
-        return self._gnn_detector.detect(x_np, edge_index)
+        x, edge_index, edge_attr = pyg_data
+        return self._gnn_detector.detect(
+            x, edge_index, edge_attr=edge_attr, topology=obs.get("_topology"))
 
     def _combine_scores(self, rule_result, gnn_result, temporal_result,
                         message_result, agent_ids, semantic_rule_result=None):

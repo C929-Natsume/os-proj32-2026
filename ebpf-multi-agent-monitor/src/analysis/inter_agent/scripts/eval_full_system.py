@@ -4,6 +4,7 @@ import json, sys, os, time, torch
 import numpy as np
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(BASE))
 sys.path.insert(0, BASE)
 
 from inter_agent.detection.gnn_detector import DOMINANT, AnomalyClassifier, extract_features
@@ -80,6 +81,19 @@ for i,g in enumerate(graphs):
                     "gnn":gnn,"sem":sem,"com_or":com_or})
     if (i+1) % 200 == 0: print(f"  [{i+1}/{len(graphs)}]", flush=True)
 print(f"\nEval: {time.time()-t0:.1f}s\n")
+
+# ── per-observation detection log ──
+log_dir = os.path.join(BASE, "..", "..", "..", "logs", "inter_log")
+os.makedirs(log_dir, exist_ok=True)
+log_ts = time.strftime("%Y%m%d_%H%M%S")
+log_path = os.path.join(log_dir, f"eval_full_system_{log_ts}.log")
+with open(log_path, "w", encoding="utf-8") as lf:
+    lf.write(f"# eval_full_system: GNN OR SemRule, GNN thresh={GNN_THRESH} Sem thresh={SEM_THRESH}\n")
+    for i, r in enumerate(results):
+        verdict = "anomaly" if r["com_or"] else "normal"
+        lf.write(f"[{verdict:7s}] obs={i:3d} label={r['label']} "
+                 f"type={r['anom_type']:25s} gnn={r['gnn']:.3f} sem={r['sem']:.3f}\n")
+print(f"Detection log -> {log_path}")
 
 from sklearn.metrics import roc_auc_score
 labels = np.array([r["label"] for r in results])

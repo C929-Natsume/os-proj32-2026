@@ -13,7 +13,7 @@
 
 static struct sys_behavior_bpf *sys_skel = NULL;
 
-int setup_sys_behavior(int enable_behavioral) {
+int setup_sys_behavior(void) {
     int err;
 
     printf("[SYS_BEHAVIOR] 正在加载内核监控探针...\n");
@@ -22,12 +22,6 @@ int setup_sys_behavior(int enable_behavioral) {
         fprintf(stderr, "[SYS_BEHAVIOR] Failed to open and load BPF skeleton\n");
         return -1;
     }
-
-    __u32 key = 0;
-    __u8 val = enable_behavioral ? 1 : 0;
-    bpf_map_update_elem(
-        bpf_map__fd(sys_skel->maps.behavioral_discovery_enabled),
-        &key, &val, BPF_ANY);
 
     err = sys_behavior_bpf__attach(sys_skel);
     if (err) {
@@ -69,18 +63,35 @@ int setup_sys_behavior(int enable_behavioral) {
     }
 
     printf("[SYS_BEHAVIOR] 系统调用监控挂载成功，Ringbuf 钉固于: %s\n", SYS_RB_PIN_PATH);
-
-    bpf_map__unpin(sys_skel->maps.behavioral_discovery_enabled,
-                   "/sys/fs/bpf/behavioral_discovery_enabled");
-    bpf_map__pin(sys_skel->maps.behavioral_discovery_enabled,
-                 "/sys/fs/bpf/behavioral_discovery_enabled");
-
     return 0;
 }
 
-int get_monitored_pids_fd(void) {
-    if (!sys_skel) return -1;
-    return bpf_map__fd(sys_skel->maps.monitored_pids);
+// 注册智能体身份到内核 Map
+/**
+ * 将 loader.c 分配的智能体编号和名称注入到 sys_behavior.bpf.c 的 monitored_pids 表
+ * * @param pid 目标智能体的物理进程 PID
+ * @param agent_id 分配给该智能体的唯一数字编号
+ * @param agent_name 分配给该智能体的文本名称
+ */
+int register_agent_sys(int pid, __u32 agent_id, const char *agent_name) {
+    if (!sys_skel) {
+        fprintf(stderr, "[-] register_agent_sys: Skeleton not loaded!\n");
+        return -1;
+    }
+    
+    struct process_context ctx = {0};
+    ctx.agent_id = agent_id;
+    ctx.is_sub_agent = 1; // 标记为智能体本身
+    ctx.parent_pid = 0;   // 根节点没有父进程
+    ctx.depth = 0;
+    
+    strncpy(ctx.agent_name, agent_name, MAX_AGENT_NAME_LEN - 1);
+    ctx.agent_name[MAX_AGENT_NAME_LEN - 1] = '\0'; 
+
+    return bpf_map__update_elem(sys_skel->maps.monitored_pids,
+        &pid, sizeof(pid),
+        &ctx, sizeof(ctx),
+        BPF_ANY);
 }
 
 void teardown_sys_behavior(void) {
@@ -89,8 +100,6 @@ void teardown_sys_behavior(void) {
         bpf_map__unpin(sys_skel->maps.raw_rb, RAW_RB_PIN_PATH);
         bpf_map__unpin(sys_skel->maps.resource_map, RES_MAP_PIN_PATH);
         bpf_map__unpin(sys_skel->maps.listen_map, "/sys/fs/bpf/listen_map");
-        bpf_map__unpin(sys_skel->maps.behavioral_discovery_enabled,
-                       "/sys/fs/bpf/behavioral_discovery_enabled");
         sys_behavior_bpf__destroy(sys_skel);
         sys_skel = NULL;
         printf("[SYS_BEHAVIOR] 已卸载清理系统调用监控探针。\n");

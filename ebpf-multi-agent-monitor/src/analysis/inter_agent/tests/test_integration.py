@@ -221,3 +221,66 @@ class TestPipeline:
         for aid, risk in report.gnn_risks.items():
             assert isinstance(risk, float)
             assert 0.0 <= risk <= 1.0
+
+
+def test_fingerprint_disabled_by_default(config, normal_obs):
+    """Default config must keep fingerprint_result empty (zero regression)."""
+    agent = MonitorAgent(config)
+    report = agent.process_observation(normal_obs)
+    assert report.fingerprint_result == {}
+
+
+def test_fingerprint_enabled_learns_and_flags_storm(config, normal_obs):
+    cfg = config
+    cfg.setdefault("detection", {})["fingerprint"] = {
+        "enabled": True, "min_samples": 2, "z_threshold": 3.0,
+        "weight": 0.2,
+    }
+    # Disable GNN: its scores on the "clean" window are model/env-dependent and
+    # could block the learn gate; the fingerprint logic itself must be tested
+    # against the deterministic rule/semantic modules only.
+    cfg["model"]["model_path"] = None
+    agent = MonitorAgent(cfg)
+    # semantically clean window (low net_send so no soft semantic rules fire)
+    clean_obs = {
+        "agents": {
+            "agent_0": {"cpu_usage": 0.3, "memory_usage": 0.4,
+                        "api_call_count": 10, "msg_sent": 3, "msg_received": 2,
+                        "proc_exec_count": 1, "proc_fork_count": 0,
+                        "fs_open_count": 5, "fs_read_count": 20,
+                        "fs_write_count": 10, "fs_unlink_count": 0,
+                        "net_connect_count": 8, "net_send_count": 5,
+                        "net_recv_count": 4, "shell_exec_count": 0,
+                        "sensitive_file_count": 0, "unique_files_count": 5},
+            "agent_1": {"cpu_usage": 0.25, "memory_usage": 0.35,
+                        "api_call_count": 5, "msg_sent": 3, "msg_received": 2,
+                        "proc_exec_count": 0, "proc_fork_count": 0,
+                        "fs_open_count": 3, "fs_read_count": 15,
+                        "fs_write_count": 8, "fs_unlink_count": 0,
+                        "net_connect_count": 5, "net_send_count": 3,
+                        "net_recv_count": 2, "shell_exec_count": 0,
+                        "sensitive_file_count": 0, "unique_files_count": 4},
+        },
+        "interactions": [
+            {"src": "agent_0", "dst": "agent_1", "type": "message",
+             "msg_count": 2, "data_size": 256, "timestamp_ns": 100},
+        ],
+        "messages": [],
+        "anomalies": [],
+        "timestamp": 200,
+        "window_start_ns": 0,
+    }
+    # learn the normal profile over several clean windows (warm-up first)
+    for _ in range(3):
+        agent.process_observation(clean_obs)
+    for _ in range(3):
+        report = agent.process_observation(clean_obs)
+        assert report.fingerprint_result["risk"] < 0.5
+    # sudden flood on a channel that was near-silent must be flagged
+    flood_obs = dict(clean_obs)
+    flood_obs["interactions"] = [
+        {"src": "agent_0", "dst": "agent_1", "type": "message",
+         "msg_count": 500, "data_size": 256, "timestamp_ns": 100},
+    ]
+    report = agent.process_observation(flood_obs)
+    assert report.fingerprint_result["risk"] > 0.5

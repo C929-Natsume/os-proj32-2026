@@ -8,10 +8,15 @@
 #include "../bpf/common.h"
 #include <time.h>
 
-#include "redis_client.h"
-#include "metrics_aggregator.h"
-
+extern void fetch_and_ship_resources(int res_fd);
 #define RES_MAP_PIN_PATH "/sys/fs/bpf/res_map"
+
+// 外部 Redis 数据推送接口
+extern int redis_shipper_init(void);
+extern void redis_shipper_close(void);
+extern int ship_sys_event(struct sys_event *event);
+extern int ship_ssl_event(struct probe_SSL_data_t *event);
+extern int ship_raw_event(struct raw_data_event *event);
 
 #define SYS_RB_PIN_PATH "/sys/fs/bpf/sys_rb"
 #define SSL_RB_PIN_PATH "/sys/fs/bpf/ssl_rb"
@@ -29,14 +34,6 @@ static int handle_sys_event(void *ctx, void *data, size_t len) {
     if (len != sizeof(struct sys_event)) return 1;
 
     struct sys_event *event = data;
-
-    if (event->event_type == EVENT_AGENT_DISCOVERY) {
-        printf("[RINGBUF] 行为识别发现事件 PID:%u Comm:%s AgentID:%u\n",
-               event->pid, event->comm, event->agent_id);
-        create_behavioral_agent(event->pid, event->comm);
-        return 0;
-    }
-
     // 打印带有 child_pid 的系统日志，方便核对血缘树
     printf("[RINGBUF] 系统行为 -> Type:%u | PID:%u | ChildPID:%u | Comm:%s\n",
            event->event_type, event->pid, event->child_pid, event->comm);
