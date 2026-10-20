@@ -1,9 +1,9 @@
 #ifndef __SSL_SNIFFER_H
 #define __SSL_SNIFFER_H
 
-#define MAX_BUF_SIZE  65536
-#define TAIL_BUF_SIZE 16384
-#define RING_BUFFER_SIZE (4 * 1024 * 1024)
+#define MAX_BUF_SIZE 65536 // 单次截获最大 64KB 
+#define RING_BUFFER_SIZE (4 * 1024 * 1024) // 4MB 环形缓冲区
+#define TASK_COMM_LEN 16
 
 // 区分来源引擎，便于用户态解析
 enum sniff_engine {
@@ -28,10 +28,8 @@ struct probe_SSL_data_t {
     int buf_filled;        // 标志位：是否成功拷贝数据
     int rw;                // 0: READ, 1: WRITE, 2: HANDSHAKE
     int is_handshake;      // 标志位：是否为握手包
-    enum sniff_engine engine;
-    __u16 chunk_index;      // 0=头块, 1=尾块
-    __u16 chunk_total;      // 1=单块完整, 2=头+尾
-    char comm[MAX_COMM_LEN];
+    enum sniff_engine engine; 
+    char comm[TASK_COMM_LEN];
     __u8 buf[MAX_BUF_SIZE];
 };
 

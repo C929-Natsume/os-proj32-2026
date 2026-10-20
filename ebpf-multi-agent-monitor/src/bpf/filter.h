@@ -47,41 +47,4 @@ static __always_inline bool try_auto_register(void *pid_map) {
     return true;
 }
 
-#define LLM_FP_SCAN_LEN 32
-
-static __always_inline bool has_llm_protocol_fingerprint(const __u8 *buf, __u32 len) {
-    if (!buf || len < 16)
-        return false;
-
-    #pragma unroll
-    for (int i = 0; i < LLM_FP_SCAN_LEN - 6; i++) {
-        if ((__u32)(i + 11) <= len &&
-            buf[i+0] == '"' && buf[i+1] == 'r' && buf[i+2] == 'o' &&
-            buf[i+3] == 'l' && buf[i+4] == 'e' && buf[i+5] == '"')
-            return true;
-    }
-
-    #pragma unroll
-    for (int i = 0; i < LLM_FP_SCAN_LEN - 7; i++) {
-        if ((__u32)(i + 12) <= len &&
-            buf[i+0] == '"' && buf[i+1] == 't' && buf[i+2] == 'o' &&
-            buf[i+3] == 'o' && buf[i+4] == 'l' && buf[i+5] == '_' &&
-            buf[i+6] == 'c' && buf[i+7] == 'a' && buf[i+8] == 'l' &&
-            buf[i+9] == 'l' && buf[i+10] == 's' && buf[i+11] == '"')
-            return true;
-    }
-
-    #pragma unroll
-    for (int i = 0; i < LLM_FP_SCAN_LEN - 7; i++) {
-        if ((__u32)(i + 10) <= len &&
-            buf[i+0] == '"' && buf[i+1] == 'm' && buf[i+2] == 'e' &&
-            buf[i+3] == 's' && buf[i+4] == 's' && buf[i+5] == 'a' &&
-            buf[i+6] == 'g' && buf[i+7] == 'e' && buf[i+8] == 's' &&
-            buf[i+9] == '"')
-            return true;
-    }
-
-    return false;
-}
-
 #endif /* __FILTER_H__ */

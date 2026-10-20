@@ -1,9 +1,9 @@
 # eBPF Multi-Agent Monitor 运行链路说明
 
-本文档概述本轮改动范围、异常类型、Redis 数据规范、用户友好日志与 SQLite 持久化方案。整体链路为：
+本文档概述本轮改动范围、异常类型、Redis 数据规范与 SQLite 持久化方案。整体链路为：
 
 ```text
-loader/eBPF -> ringbuf_handler -> Redis -> main_analyzer(mode) -> intra/inter -> 用户友好日志 + SQLite
+loader/eBPF -> ringbuf_handler -> Redis -> main_analyzer -> SQLite
 ```
 
 ## 1. 修改文件
@@ -12,7 +12,6 @@ loader/eBPF -> ringbuf_handler -> Redis -> main_analyzer(mode) -> intra/inter ->
 | --- | --- |
 | `src/user/redis_shipper.c` | 增强 Redis 推送逻辑，新增 `inter:messages` Stream 写入；补充 `pid/tid/main_pid/comm/agent_id` 等归因字段；修复 `XADD` 参数格式。 |
 | `src/analysis/main_analyzer.py` | 主分析器同时支持 Redis pub/sub 与 Stream；默认只消费新事件；增加非 UTF-8 安全解码、SSL 降噪、异常入库逻辑。 |
-| `src/analysis/intra_agent/user_log.py` | 新增单点异常用户友好日志格式化与文件落盘，实现控制台与文件双写。 |
 | `src/analysis/sqlite_store.py` | 新增 SQLite 持久化模块，保存原始事件、异常记录和审计结果。 |
 | `src/analysis/inter_agent/main.py` | 增强跨智能体关联分析，包括短 SSL 会话、重复 payload、提示注入、资源竞争等规则。 |
 | `src/config/app_config.yaml` | 新增 SQLite 存储配置。 |
@@ -115,47 +114,7 @@ sqlite3 logs/alerts/analysis.db \
   "select rule, severity, pid, comm, result_json from audit_results order by id desc limit 5;"
 ```
 
-## 5. 用户友好日志
-
-为满足比赛“归因定位与告警日志”要求，单点异常日志在 `intra_agent` 内部统一生成，外层只保留模式选择与分发接口，不侵入 `inter_agent` 目录中的实现。
-
-### 模式选择
-
-`main_analyzer.py` 新增三种运行模式：
-
-| 模式 | 含义 |
-| --- | --- |
-| `single` | 仅开启单点异常检测与审计日志。 |
-| `interactive` | 仅开启交互式多智能体分析。 |
-| `all` | 同时开启单点与交互式分析。 |
-
-启动示例：
-
-```bash
-cd /mnt/e/os2026/ebpf-multi-agent-monitor
-PYTHONUNBUFFERED=1 ./.venv/bin/python src/analysis/main_analyzer.py --mode single
-```
-
-### 日志落点
-
-| 目录 | 用途 |
-| --- | --- |
-| `logs/intra_agent/` | 保存单点异常用户友好日志。 |
-| `logs/inter_agent/` | 预留给交互式多智能体日志，不修改同学当前实现。 |
-
-### 日志内容
-
-单点日志块对齐 `step4_log.md`，包含：
-
-- 异常类型
-- 触发事件序列
-- 最近 prompt/response 语义关联
-- 根因定位
-- 用户可读分析报告
-
-日志同时打印到控制台，并同步写入 `logs/intra_agent/anomaly_YYYYMMDD_HHMMSS.log`。
-
-## 6. 终端命令
+## 5. 终端命令
 
 ### 挂载 bpffs
 

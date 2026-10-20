@@ -28,13 +28,13 @@ from datetime import datetime
 logger = logging.getLogger("vm_runtime")
 logging.basicConfig(level=logging.INFO, format="[RUNTIME] %(asctime)s %(message)s")
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 from inter_agent.config import load_config
 _cfg = load_config()
 _llm_cfg = _cfg.get("llm", {})
 API_BASE_URL = _llm_cfg.get("api_base_url", "")
 API_MODEL = _llm_cfg.get("model", "")
-API_KEY = _llm_cfg.get("api_key", "")
+API_KEY = _llm_cfg.get("api_key", "") or os.environ.get("SILICONFLOW_API_KEY", "")
 
 SAMPLE_TASKS = [
     "List files in /tmp and report disk usage",
@@ -258,7 +258,7 @@ def main():
         sys.exit(1)
 
     # ── Import MonitorAgent ──
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
     try:
         from inter_agent.monitor.agent import MonitorAgent
         from inter_agent.config import load_config

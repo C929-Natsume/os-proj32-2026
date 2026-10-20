@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 
@@ -89,3 +90,60 @@ class TestSemanticRuleChecker:
                 denom = counts["tp"] + counts["fn"]
                 rec = counts["tp"] / denom if denom else 0
                 assert rec >= 0.1, f"Recall too low for {atype}: {rec:.3f}"
+
+
+class TestStructuralRuleFixes:
+    """Regression tests for the structural-rule false positives.
+
+    Uses test_labeled.json (the demo data pool). The rules must never fire on
+    normal observations while still firing on their simulated injections.
+    """
+
+    def _rule_fires(self, checker, obs, type_name):
+        return type_name in checker.check(obs).get("anomaly_types", [])
+
+    def test_supervisor_bypass_never_fires_on_normal(self, checker):
+        data = _load_data("test_labeled.json")
+        fired = [i for i, o in enumerate(data)
+                 if self._rule_fires(checker, o, "supervisor_bypass")]
+        assert fired == []
+
+    def test_supervisor_bypass_fires_on_inject(self, checker):
+        from inter_agent.data.vm_autogen_collector import inject_supervisor_bypass
+        data = _load_data("test_labeled.json")
+        for topo in ("hierarchical", "peer-to-peer"):
+            obs = copy.deepcopy(data[24])
+            obs["_topology"] = topo
+            aids = sorted(obs["agents"].keys())
+            inject_supervisor_bypass(obs, aids)
+            assert self._rule_fires(checker, obs, "supervisor_bypass")
+
+    def test_flood_from_single_only_fires_on_dense_hubs(self, checker):
+        data = _load_data("test_labeled.json")
+        fired = {i for i, o in enumerate(data)
+                 if self._rule_fires(checker, o, "flood_from_single")}
+        assert {57, 61, 73, 84} <= fired
+
+    def test_flood_from_single_fires_on_inject(self, checker):
+        from inter_agent.data.vm_autogen_collector import inject_flood_from_single
+        data = _load_data("test_labeled.json")
+        obs = copy.deepcopy(data[94])
+        aids = sorted(obs["agents"].keys())
+        inject_flood_from_single(obs, aids)
+        assert self._rule_fires(checker, obs, "flood_from_single")
+
+    def test_message_disorder_never_fires_on_normal(self, checker):
+        data = _load_data("test_labeled.json")
+        fired = [i for i, o in enumerate(data)
+                 if self._rule_fires(checker, o, "message_disorder")]
+        assert fired == []
+
+    def test_message_disorder_fires_on_inject(self, checker):
+        from inter_agent.data.autogen_scenarios import inject_sem_message_disorder
+        data = _load_data("test_labeled.json")
+        obs = copy.deepcopy(data[26])
+        aids = sorted(obs["agents"].keys())
+        inject_sem_message_disorder(obs, aids)
+        result = checker.check(obs)
+        assert "message_disorder" in result["anomaly_types"]
+        assert result["overall_risk"] >= 0.585

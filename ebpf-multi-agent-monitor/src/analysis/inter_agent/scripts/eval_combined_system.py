@@ -9,6 +9,7 @@ import json, sys, os, time, copy
 import numpy as np
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(BASE))
 sys.path.insert(0, BASE)
 
 from inter_agent.config import load_config
